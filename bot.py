@@ -22,6 +22,7 @@ Sortie : affiche un résumé JSON du cycle sur stdout (visible dans les logs Git
 import json
 import os
 import sys
+import time
 import uuid
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -37,6 +38,8 @@ STARTING_EQUITY = 50.0   # capital papier initial en EUR
 PAUSE_THRESHOLD = 5.0    # le bot se met en pause si le capital tombe sous 5 EUR
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0"
 RELAY_URL = "https://superagent-583f72c3.base44.app/functions/discordTradingSend"  # relais securise Discord
+CHECK_INTERVAL_SEC = int(os.environ.get("CHECK_INTERVAL_SEC", "60"))   # verification toutes les 60 s
+CHECKS_PER_RUN = int(os.environ.get("CHECKS_PER_RUN", "13"))           # ~13 min de surveillance par run
 
 
 # ---------------------------------------------------------------- utilitaires
@@ -262,29 +265,11 @@ def build_event_embed(result, state):
 
 # ---------------------------------------------------------------------- main
 
-def main():
-    state = load_json(STATE_FILE, None)
-    if state is None:
-        state = {
-            "equity": STARTING_EQUITY,
-            "starting_equity": STARTING_EQUITY,
-            "status": "RUNNING",
-            "trade_count": 0,
-            "open_side": "",
-            "open_entry": None,
-            "open_size": None,
-            "open_sl": None,
-            "open_tp": None,
-            "open_time": None,
-            "open_reason": None,
-            "position_id": None,
-        }
-    trades = load_json(TRADES_FILE, [])
-
+def run_cycle(state, trades):
+    """Un check complet : recuperation des bougies, indicateurs, decisions, sauvegarde."""
     candles = fetch_candles()
     if len(candles) < 25:
-        print(json.dumps({"error": "Pas assez de bougies"}))
-        sys.exit(1)
+        return {"action": "ERROR", "detail": "Pas assez de bougies", "equity": state["equity"], "price": None}
     eurusd = fetch_eurusd()
 
     closes = [c["c"] for c in candles]
@@ -427,24 +412,55 @@ def main():
                     else "Aucun croisement, en surveillance"
                 )
 
-    # ---- 3) sauvegarde + compte-rendu Discord
+    # ---- 3) sauvegarde de l'etat a chaque check
     state["last_price"] = round(price, 2)
     state["eurusd"] = round(eurusd, 4)
     state["last_cycle"] = datetime.now(ZoneInfo("Europe/Paris")).isoformat()
     save_json(STATE_FILE, state)
     save_json(TRADES_FILE, trades)
-
-    heure = datetime.now(ZoneInfo("Europe/Paris")).strftime("%H:%M")
-    webhook = os.environ.get("DISCORD_WEBHOOK_URL", "")
-    event = build_event_embed(result, state)
-    if event:
-        post_discord(webhook, event)
-    ok, info = post_discord(webhook, build_embed(heure, result, state))
-    result["posted"] = ok
-    result["discord_info"] = info
     result["eurusd"] = round(eurusd, 4)
+    return result
 
-    print(json.dumps(result, ensure_ascii=False))
+
+def main():
+    state = load_json(STATE_FILE, None)
+    if state is None:
+        state = {
+            "equity": STARTING_EQUITY,
+            "starting_equity": STARTING_EQUITY,
+            "status": "RUNNING",
+            "trade_count": 0,
+            "open_side": "",
+            "open_entry": None,
+            "open_size": None,
+            "open_sl": None,
+            "open_tp": None,
+            "open_time": None,
+            "open_reason": None,
+            "position_id": None,
+        }
+    trades = load_json(TRADES_FILE, [])
+    webhook = os.environ.get("DISCORD_WEBHOOK_URL", "")
+
+    for check in range(CHECKS_PER_RUN):
+        result = run_cycle(state, trades)
+        heure = datetime.now(ZoneInfo("Europe/Paris")).strftime("%H:%M:%S")
+        if result.get("action") == "ERROR":
+            print(json.dumps({"check": check + 1, "error": result["detail"]}, ensure_ascii=False))
+        else:
+            # evenement d'ouverture/fermeture -> message Discord IMMEDIAT
+            event = build_event_embed(result, state)
+            if event:
+                post_discord(webhook, event)
+            # compte-rendu de cycle UNIQUEMENT au dernier check du run
+            if check == CHECKS_PER_RUN - 1:
+                ok, info = post_discord(webhook, build_embed(heure, result, state))
+                result["posted"] = ok
+                result["discord_info"] = info
+            print(json.dumps({"check": check + 1, "heure": heure, **{
+                k: result.get(k) for k in ("action", "detail", "equity", "price")}}, ensure_ascii=False))
+        if check < CHECKS_PER_RUN - 1:
+            time.sleep(CHECK_INTERVAL_SEC)
     if not ok:
         print(f"ECHEC ENVOI DISCORD : {info}")
         sys.exit(1)
