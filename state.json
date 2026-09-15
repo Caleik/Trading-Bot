@@ -10,5 +10,7 @@
   "open_tp": null,
   "open_time": null,
   "open_reason": null,
-  "position_id": null
+  "position_id": null,
+  "last_price": 4318.1,
+  "last_cycle": "2026-09-15T16:54:55.525513+02:00"
 }
