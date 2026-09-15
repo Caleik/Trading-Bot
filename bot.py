@@ -217,6 +217,49 @@ def build_embed(heure, result, state):
     }
 
 
+def build_event_embed(result, state):
+    """Message Discord dedie a chaque evenement de position (ouverture, SL, TP...)."""
+    action = result["action"]
+    heure = datetime.now(ZoneInfo("Europe/Paris")).strftime("%H:%M")
+    pos = result.get("position") or {}
+    if action == "OPEN_LONG" or action == "OPEN_SHORT":
+        long_ = action == "OPEN_LONG"
+        return {
+            "title": ("🟢 ACHAT (LONG)" if long_ else "🔴 VENTE (SHORT)")
+                     + " — position ouverte",
+            "color": 0x2ECC71 if long_ else 0xE74C3C,
+            "fields": [
+                {"name": "Entrée", "value": f"**{round(pos.get('entry', 0), 2)} $**", "inline": True},
+                {"name": "Taille", "value": f"{pos.get('size', 0)} oz", "inline": True},
+                {"name": "Risque", "value": f"{round(RISK_PCT * 100)} % du capital", "inline": True},
+                {"name": "🛑 Stop Loss", "value": f"{pos.get('sl')} $", "inline": True},
+                {"name": "🎯 Take Profit", "value": f"{pos.get('tp')} $", "inline": True},
+                {"name": "Signal", "value": state.get("open_reason") or "—", "inline": False},
+            ],
+            "footer": {"text": f"Ouvert à {heure} — suivi sur le panneau GitHub Pages"},
+        }
+    if action.startswith("CLOSE_"):
+        reason = action[6:]
+        pnl_txt = result["detail"]
+        if reason == "TP":
+            title, color = "🎯 TAKE PROFIT ATTEINT — trade clôturé", 0x2ECC71
+        elif reason == "SL":
+            title, color = "🛑 STOP LOSS TOUCHÉ — trade clôturé", 0xE74C3C
+        else:
+            title, color = "↩️ Signal inversé — position clôturée", 0x9B59B6
+        return {
+            "title": title,
+            "color": color,
+            "fields": [
+                {"name": "Résultat", "value": f"**{pnl_txt}**", "inline": False},
+                {"name": "💰 Capital", "value": f"**{round(result['equity'], 2)} EUR**", "inline": True},
+                {"name": "🔢 Trades", "value": f"{state['trade_count']} clôturé(s)", "inline": True},
+            ],
+            "footer": {"text": f"Fermé à {heure} — le bot continue sa surveillance"},
+        }
+    return None
+
+
 # ---------------------------------------------------------------------- main
 
 def main():
@@ -386,12 +429,16 @@ def main():
 
     # ---- 3) sauvegarde + compte-rendu Discord
     state["last_price"] = round(price, 2)
+    state["eurusd"] = round(eurusd, 4)
     state["last_cycle"] = datetime.now(ZoneInfo("Europe/Paris")).isoformat()
     save_json(STATE_FILE, state)
     save_json(TRADES_FILE, trades)
 
     heure = datetime.now(ZoneInfo("Europe/Paris")).strftime("%H:%M")
     webhook = os.environ.get("DISCORD_WEBHOOK_URL", "")
+    event = build_event_embed(result, state)
+    if event:
+        post_discord(webhook, event)
     ok, info = post_discord(webhook, build_embed(heure, result, state))
     result["posted"] = ok
     result["discord_info"] = info
