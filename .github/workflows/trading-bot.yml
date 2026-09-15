@@ -17,7 +17,7 @@ concurrency:
 jobs:
   run-bot:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 16   # 13 checks de 60 s (~13,5 min) + marge
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -25,7 +25,7 @@ jobs:
           python-version: "3.12"
       - name: Installer les dependances
         run: pip install requests
-      - name: Cycle du bot de trading
+      - name: Surveillance continue du bot (13 checks de 60 s)
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
         run: python bot.py
