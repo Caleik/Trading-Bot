@@ -1,0 +1,14 @@
+{
+  "equity": 50.0,
+  "starting_equity": 50.0,
+  "status": "RUNNING",
+  "trade_count": 0,
+  "open_side": "",
+  "open_entry": null,
+  "open_size": null,
+  "open_sl": null,
+  "open_tp": null,
+  "open_time": null,
+  "open_reason": null,
+  "position_id": null
+}
