@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Panneau Bot Trading Or XAU/USD</title>
+<script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
 <style>
   :root { --bg:#0d1117; --card:#161b22; --border:#30363d; --text:#e6edf3; --muted:#8b949e; --gold:#f0b429; --blue:#58a6ff; --green:#3fb950; --red:#f85149; }
   * { box-sizing:border-box; margin:0; padding:0; }
@@ -26,7 +27,6 @@
   .none { background:rgba(139,148,158,.15); color:var(--muted); }
   h2 { font-size:15px; margin:20px 0 10px; color:var(--gold); display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap; }
   canvas { width:100%; height:220px; background:var(--card); border:1px solid var(--border); border-radius:10px; }
-  canvas.small { height:120px; }
   table { width:100%; border-collapse:collapse; font-size:13px; }
   th,td { padding:8px 10px; text-align:left; border-bottom:1px solid var(--border); white-space:nowrap; }
   th { color:var(--muted); font-weight:600; font-size:12px; text-transform:uppercase; }
@@ -36,12 +36,16 @@
   .err { background:rgba(248,81,73,.1); border:1px solid var(--red); border-radius:10px; padding:14px; margin:20px 0; font-size:14px; line-height:1.6; }
   .spinner { display:inline-block; width:14px; height:14px; border:2px solid var(--muted); border-top-color:var(--gold); border-radius:50%; animation:spin 1s linear infinite; vertical-align:-2px; margin-right:6px; }
   @keyframes spin { to { transform:rotate(360deg); } }
-  .tfrow { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:10px; }
+  .tfrow { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:10px; align-items:center; }
   .tf { padding:7px 12px; border-radius:8px; background:var(--card); border:1px solid var(--border); color:var(--muted); font-size:13px; font-weight:700; cursor:pointer; }
   .tf.active { border-color:var(--gold); color:var(--gold); background:rgba(240,180,41,.08); }
   .legend { display:flex; gap:14px; flex-wrap:wrap; font-size:12px; color:var(--muted); margin-bottom:8px; }
   .dot { display:inline-block; width:10px; height:10px; border-radius:50%; margin-right:4px; vertical-align:-1px; }
+  .chartbox { background:var(--card); border:1px solid var(--border); border-radius:10px; overflow:hidden; margin-bottom:10px; }
+  #livewrap { height:320px; }
+  #rsiwrap, #atrwrap { height:110px; }
   .hidden { display:none; }
+  .hint { font-size:12px; color:var(--muted); text-align:center; margin-bottom:10px; }
 </style>
 </head>
 <body>
@@ -83,16 +87,16 @@
 
     <div class="tfrow" id="tfrow"></div>
     <div class="legend">
-      <span><span class="dot" style="background:var(--green)"></span>hausse</span>
-      <span><span class="dot" style="background:var(--red)"></span>baisse</span>
       <span><span class="dot" style="background:var(--gold)"></span>EMA 9</span>
       <span><span class="dot" style="background:var(--blue)"></span>EMA 21</span>
+      <span id="ohlclegend" style="margin-left:auto"></span>
     </div>
-    <canvas id="livechart" width="860" height="260"></canvas>
-    <div class="legend" style="margin-top:12px"><span>RSI 14 — zones 30 (survendu) / 70 (suracheté)</span></div>
-    <canvas id="rsichart" class="small" width="860" height="120"></canvas>
-    <div class="legend" style="margin-top:12px"><span>ATR 14 — volatilité (utilisée pour le SL 1.5x / TP 2.5x)</span></div>
-    <canvas id="atrchart" class="small" width="860" height="120"></canvas>
+    <div class="chartbox" id="livewrap"></div>
+    <div class="legend"><span>RSI 14 — zones 30 (survendu) / 70 (suracheté)</span></div>
+    <div class="chartbox" id="rsiwrap"></div>
+    <div class="legend"><span>ATR 14 — volatilité (utilisée pour le SL 1.5x / TP 2.5x)</span></div>
+    <div class="chartbox" id="atrwrap"></div>
+    <div class="hint">👍 Pince à deux doigts pour zoomer · glisse pour naviguer dans le temps</div>
   </div>
 
   <div class="footer">
@@ -108,6 +112,7 @@
 const OWNER = 'Caleik', REPO = 'Trading-Bot', BRANCH = 'main';
 const RAW = `https://raw.githubusercontent.com/${OWNER}/${REPO}/${BRANCH}`;
 const LIVE_PAIR = 'PAXG-USD';
+const TZ_OFFSET_SEC = -new Date().getTimezoneOffset() * 60; // affiche les heures locales du téléphone
 
 // ===== ONGLETS =====
 function switchTab(n) {
@@ -115,7 +120,7 @@ function switchTab(n) {
     document.getElementById('tab-'+i).classList.toggle('hidden', i !== n);
     document.getElementById('tabbtn-'+i).classList.toggle('active', i === n);
   }
-  if (n === 2) refreshLive();
+  if (n === 2) { if (LW.ready) refreshLive(); else buildLiveCharts().then(refreshLive); }
 }
 
 // ===== UTILS COMMUNS =====
@@ -224,7 +229,7 @@ async function refresh() {
 }
 
 // ============================================================
-//  ONGLET 2 — LIVE MARCHÉ (or via Coinbase PAXG-USD)
+//  ONGLET 2 — LIVE MARCHÉ (graphiques tactiles TradingView)
 // ============================================================
 const TFS = [
   {label:'1 min',  g:60},
@@ -235,6 +240,7 @@ const TFS = [
   {label:'1 jour', g:86400},
 ];
 let curTF = 2; // 15 min par défaut (cycle du bot)
+const LW = { ready:false, main:null, rsi:null, atr:null, candles:null, e9s:null, e21s:null, rsiS:null, atrS:null, syncing:false };
 
 // --- indicateurs (mêmes formules que le bot : Wilder pour RSI/ATR) ---
 function ema(values, n) {
@@ -267,7 +273,7 @@ function rsi(closes, n = 14) {
 }
 function atr2(bars, n = 14) {
   const trs = bars.map((b, i) => i === 0 ? b.h - b.l : Math.max(b.h - b.l, Math.abs(b.h - bars[i-1].c), Math.abs(b.l - bars[i-1].c)));
-  const out = bars.map((_, i) => i < n - 1 ? null : null);
+  const out = bars.map(() => null);
   let a = 0;
   for (let i = 0; i < n && i < trs.length; i++) a += trs[i];
   a /= Math.min(n, trs.length);
@@ -279,102 +285,92 @@ function atr2(bars, n = 14) {
 async function fetchLive(tf) {
   const r = await fetch(`https://api.exchange.coinbase.com/products/${LIVE_PAIR}/candles?granularity=${tf.g}`, { cache:'no-store' });
   if (!r.ok) throw new Error('HTTP ' + r.status);
-  const raw = await r.json(); // [[time, low, high, open, close, volume], ...] récentes d'abord
-  const bars = raw.map(c => ({ t: c[0] * 1000, l: c[1], h: c[2], o: c[3], c: c[4] })).reverse();
-  return bars;
+  const raw = await r.json();
+  return raw.map(c => ({ t: c[0] * 1000, l: c[1], h: c[2], o: c[3], c: c[4] })).reverse();
 }
 
-function timeLabel(ts, tf) {
-  const d = new Date(ts);
-  if (tf.g < 3600) return d.toLocaleTimeString('fr-FR', {hour:'2-digit', minute:'2-digit'});
-  if (tf.g < 86400) return d.toLocaleDateString('fr-FR', {day:'2-digit', month:'2-digit'}) + ' ' + d.toLocaleTimeString('fr-FR', {hour:'2-digit', minute:'2-digit'});
-  return d.toLocaleDateString('fr-FR', {day:'2-digit', month:'2-digit'});
+// --- construction des 3 graphiques TradingView (zoom tactile + navigation) ---
+function chartOpts(h) {
+  return {
+    autoSize: true,
+    layout: { background: { color: '#161b22' }, textColor: '#8b949e', fontSize: 11 },
+    grid: { vertLines: { color: '#21262d' }, horzLines: { color: '#21262d' } },
+    rightPriceScale: { borderColor: '#30363d' },
+    timeScale: { borderColor: '#30363d', timeVisible: true, secondsVisible: false, rightOffset: 3 },
+    handleScroll: true,
+    handleScale: true,
+    crosshair: { mode: 1 },
+  };
 }
-
-function drawLive(bars, e9, e21, tf) {
-  const c = document.getElementById('livechart'), ctx = c.getContext('2d');
-  const W = c.width, H = c.height, pad = 52, bottom = 22;
-  const closes = bars.map(b => b.c);
-  const min = Math.min(...bars.map(b => b.l), ...e9.filter(v => v != null), ...e21.filter(v => v != null));
-  const max = Math.max(...bars.map(b => b.h), ...e9.filter(v => v != null), ...e21.filter(v => v != null));
-  const range = (max - min) || 1;
-  const x = i => pad + (W - pad - 8) * i / (bars.length - 1 || 1);
-  const y = v => 6 + (H - bottom - 6) * (1 - (v - min) / range);
-  ctx.clearRect(0,0,W,H);
-  ctx.font = '11px sans-serif'; ctx.fillStyle = '#8b949e'; ctx.strokeStyle = '#30363d'; ctx.lineWidth = 1;
-  for (let i = 0; i <= 4; i++) {
-    const yy = 6 + (H - bottom - 6) * i / 4;
-    ctx.beginPath(); ctx.moveTo(pad, yy); ctx.lineTo(W - 4, yy); ctx.stroke();
-    ctx.fillText(fmt(max - range * i / 4), 6, yy + 3);
+async function buildLiveCharts() {
+  if (typeof LightweightCharts === 'undefined') {
+    document.getElementById('liveupd').textContent = 'Librairie de graphiques non chargée — vérifie ta connexion internet.';
+    return;
   }
-  const nbLabels = 6;
-  for (let i = 0; i <= nbLabels; i++) {
-    const idx = Math.floor((bars.length - 1) * i / nbLabels);
-    ctx.fillText(timeLabel(bars[idx].t, tf), Math.min(x(idx), W - 76), H - 6);
-  }
-  const bw = Math.max(2, Math.min(10, (W - pad - 8) / bars.length - 1));
-  bars.forEach((b, i) => {
-    const up = b.c >= b.o;
-    ctx.strokeStyle = ctx.fillStyle = up ? '#3fb950' : '#f85149';
-    ctx.beginPath(); ctx.moveTo(x(i), y(b.h)); ctx.lineTo(x(i), y(b.l)); ctx.stroke();
-    const y1 = y(Math.max(b.o, b.c)), y2 = y(Math.min(b.o, b.c));
-    ctx.fillRect(x(i) - bw/2, y1, bw, Math.max(1.5, y2 - y1));
+  const LWC = LightweightCharts;
+  const base = chartOpts();
+  LW.main = LWC.createChart(document.getElementById('livewrap'), base);
+  LW.candles = LW.main.addCandlestickSeries({
+    upColor: '#3fb950', downColor: '#f85149', wickUpColor: '#3fb950', wickDownColor: '#f85149',
+    borderVisible: false, priceFormat: { type: 'price', precision: 2, minMove: 0.01 }
   });
-  [[e9, '#f0b429'], [e21, '#58a6ff']].forEach(([line, color]) => {
-    ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.beginPath(); let started = false;
-    line.forEach((v, i) => { if (v == null) return; started ? ctx.lineTo(x(i), y(v)) : (ctx.moveTo(x(i), y(v)), started = true); });
-    ctx.stroke();
+  LW.e9s = LW.main.addLineSeries({ color: '#f0b429', lineWidth: 2, priceLine: false, lastValueVisible: false, crosshairMarkerVisible: false });
+  LW.e21s = LW.main.addLineSeries({ color: '#58a6ff', lineWidth: 2, priceLine: false, lastValueVisible: false, crosshairMarkerVisible: false });
+  LW.rsi = LWC.createChart(document.getElementById('rsiwrap'), chartOpts());
+  LW.rsiS = LW.rsi.addLineSeries({ color: '#58a6ff', lineWidth: 2, priceLine: false, lastValueVisible: false, crosshairMarkerVisible: false });
+  LW.rsiS.createPriceLine({ price: 70, color: '#f85149', lineWidth: 1, lineStyle: LWC.LineStyle.Dashed, axisLabelVisible: false });
+  LW.rsiS.createPriceLine({ price: 30, color: '#3fb950', lineWidth: 1, lineStyle: LWC.LineStyle.Dashed, axisLabelVisible: false });
+  LW.atr = LWC.createChart(document.getElementById('atrwrap'), chartOpts());
+  LW.atrS = LW.atr.addLineSeries({ color: '#f0b429', lineWidth: 2, priceLine: false, lastValueVisible: false, crosshairMarkerVisible: false });
+  // synchronisation du zoom/navigation entre les 3 graphiques
+  const group = [LW.main, LW.rsi, LW.atr];
+  group.forEach(src => {
+    src.timeScale().subscribeVisibleLogicalRangeChange(range => {
+      if (!range || LW.syncing) return;
+      LW.syncing = true;
+      group.forEach(o => { if (o !== src) o.timeScale().setVisibleLogicalRange(range); });
+      LW.syncing = false;
+    });
   });
-}
-
-function drawPanel(canvasId, values, opt) {
-  const c = document.getElementById(canvasId), ctx = c.getContext('2d');
-  const W = c.width, H = c.height, pad = 52, bottom = 8;
-  ctx.clearRect(0,0,W,H);
-  ctx.font = '11px sans-serif'; ctx.strokeStyle = '#30363d'; ctx.lineWidth = 1;
-  const lo = opt.min, hi = opt.max, range = (hi - lo) || 1;
-  const x = i => pad + (W - pad - 8) * i / (values.length - 1 || 1);
-  const y = v => 6 + (H - bottom - 6) * (1 - (v - lo) / range);
-  for (let i = 0; i <= 2; i++) {
-    const yy = 6 + (H - bottom - 6) * i / 2;
-    ctx.beginPath(); ctx.moveTo(pad, yy); ctx.lineTo(W - 4, yy); ctx.stroke();
-    ctx.fillStyle = '#8b949e';
-    ctx.fillText(fmt(hi - range * i / 2), 6, yy + 3);
-  }
-  (opt.lines || []).forEach(lv => {
-    ctx.strokeStyle = lv.color; ctx.setLineDash([4,4]); ctx.beginPath(); ctx.moveTo(pad, y(lv.v)); ctx.lineTo(W - 4, y(lv.v)); ctx.stroke(); ctx.setLineDash([]);
+  // légende OHLC au survol / toucher
+  LW.main.subscribeCrosshairMove(param => {
+    const el = document.getElementById('ohlclegend');
+    if (!param.time || !param.seriesData.get(LW.candles)) { el.textContent = ''; return; }
+    const b = param.seriesData.get(LW.candles);
+    const up = b.close >= b.open;
+    el.innerHTML = `<span class="${up?'gain':'perte'}">O ${fmt(b.open)} H ${fmt(b.high)} B ${fmt(b.low)} C ${fmt(b.close)}</span>`;
   });
-  ctx.strokeStyle = opt.color; ctx.lineWidth = 2; ctx.beginPath(); let started = false;
-  values.forEach((v, i) => { if (v == null) return; started ? ctx.lineTo(x(i), y(v)) : (ctx.moveTo(x(i), y(v)), started = true); });
-  ctx.stroke();
+  LW.ready = true;
 }
 
 async function refreshLive() {
   const tf = TFS[curTF];
+  const upd = document.getElementById('liveupd');
   try {
+    if (!LW.ready) { await buildLiveCharts(); if (!LW.ready) return; }
     const bars = await fetchLive(tf);
     if (!bars.length) throw new Error('aucune donnée');
     const closes = bars.map(b => b.c);
-    const e9 = ema(closes, 9), e21 = ema(closes, 21), r = rsi(closes, 14), a = atr2(bars, 14);
+    const e9 = ema(closes, 9), e21 = ema(closes, 21), rr = rsi(closes, 14), aa = atr2(bars, 14);
+    const T = b => Math.floor(b.t / 1000) + TZ_OFFSET_SEC;
+    LW.candles.setData(bars.map(b => ({ time: T(b), open: b.o, high: b.h, low: b.l, close: b.c })));
+    LW.e9s.setData(bars.map((b, i) => e9[i] == null ? null : { time: T(b), value: e9[i] }).filter(Boolean));
+    LW.e21s.setData(bars.map((b, i) => e21[i] == null ? null : { time: T(b), value: e21[i] }).filter(Boolean));
+    LW.rsiS.setData(bars.map((b, i) => rr[i] == null ? null : { time: T(b), value: rr[i] }).filter(Boolean));
+    LW.atrS.setData(bars.map((b, i) => aa[i] == null ? null : { time: T(b), value: aa[i] }).filter(Boolean));
     const last = bars[bars.length - 1];
-    const first = bars[0];
-    const chg = last.c - first.c, chgPct = first.c ? chg / first.c * 100 : 0;
+    const chg = last.c - bars[0].c, chgPct = bars[0].c ? chg / bars[0].c * 100 : 0;
     document.getElementById('liveprice').textContent = fmt(last.c) + ' $';
     document.getElementById('livechg').innerHTML = `<span class="${chg>=0?'gain':'perte'}">${chg>=0?'+':''}${fmt(chg)} $ (${chg>=0?'+':''}${fmt(chgPct,2)} %) sur la période affichée</span>`;
-    // signal = logique du bot appliquée à la dernière bougie
-    const le9 = e9[e9.length-1], le21 = e21[e21.length-1], lr = r[r.length-1];
+    const le9 = e9[e9.length-1], le21 = e21[e21.length-1], lr = rr[rr.length-1];
     const sig = document.getElementById('livesignal'), det = document.getElementById('livesigdetail');
     if (le9 == null || lr == null) { sig.textContent = '—'; sig.className = 'badge none'; det.textContent = 'En attente de suffisamment de données'; }
     else if (le9 > le21 && lr < 70) { sig.textContent = 'ACHAT 🟢'; sig.className = 'badge long'; det.textContent = `EMA9 > EMA21 (tendance haussière) et RSI ${fmt(lr,1)} < 70`; }
     else if (le9 < le21 && lr > 30) { sig.textContent = 'VENTE 🔴'; sig.className = 'badge short'; det.textContent = `EMA9 < EMA21 (tendance baissière) et RSI ${fmt(lr,1)} > 30`; }
     else { sig.textContent = 'ATTENTE ⏳'; sig.className = 'badge none'; det.textContent = `EMAs ${le9>le21?'haussières':'baissières'} mais RSI ${fmt(lr,1)} bloque le signal`; }
-    drawLive(bars, e9, e21, tf);
-    drawPanel('rsichart', r, {min:0, max:100, color:'#58a6ff', lines:[{v:70,color:'#f85149'},{v:30,color:'#3fb950'},{v:50,color:'#30363d'}]});
-    const amax = Math.max(...a.filter(v => v != null));
-    drawPanel('atrchart', a, {min:0, max:amax, color:'#f0b429'});
-    document.getElementById('liveupd').textContent = `Cours de l'or · actualisé à ${new Date().toLocaleTimeString('fr-FR')} · rafraîchissement auto 30 s · ${bars.length} bougies ${tf.label}`;
+    upd.textContent = `Cours de l'or · actualisé à ${new Date().toLocaleTimeString('fr-FR')} · rafraîchissement auto 30 s · ${bars.length} bougies ${tf.label}`;
   } catch (e) {
-    document.getElementById('liveupd').textContent = 'Erreur de chargement du cours : ' + e.message;
+    upd.textContent = 'Erreur de chargement du cours : ' + e.message;
   }
 }
 
@@ -387,6 +383,11 @@ function buildTFButtons() {
     b.onclick = () => { curTF = i; [...row.children].forEach((el, j) => el.classList.toggle('active', j === i)); refreshLive(); };
     row.appendChild(b);
   });
+  const reset = document.createElement('div');
+  reset.className = 'tf';
+  reset.textContent = '⟲ Vue complète';
+  reset.onclick = () => { if (LW.ready) { LW.main.timeScale().fitContent(); } };
+  row.appendChild(reset);
 }
 
 // ===== OANDA (futur) =====
@@ -402,7 +403,7 @@ buildTFButtons();
 refresh();
 checkOanda();
 setInterval(refresh, 60000);
-setInterval(() => { if (!document.getElementById('tab-2').classList.contains('hidden')) refreshLive(); }, 30000);
+setInterval(() => { if (!document.getElementById('tab-2').classList.contains('hidden') && LW.ready) refreshLive(); }, 30000);
 </script>
 </body>
 </html>
