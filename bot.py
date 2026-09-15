@@ -36,6 +36,7 @@ TP_ATR = 2.5             # take profit = 2.5 x ATR
 STARTING_EQUITY = 50.0   # capital papier initial en EUR
 PAUSE_THRESHOLD = 5.0    # le bot se met en pause si le capital tombe sous 5 EUR
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0"
+RELAY_URL = "https://superagent-583f72c3.base44.app/functions/discordTradingSend"  # relais securise Discord
 
 
 # ---------------------------------------------------------------- utilitaires
@@ -134,20 +135,35 @@ def fetch_eurusd():
 
 # ------------------------------------------------------------------ Discord
 
-def post_discord(webhook_url, embed, username="Bot Or 🤖"):
-    if not webhook_url:
-        return False, "WEBHOOK ABSENT - le secret DISCORD_WEBHOOK_URL n'est pas configure"
+def post_discord(webhook_url, embed, username="Bot Or \U0001F916"):
+    """Envoie l'embed sur Discord.
+
+    1) Webhook direct si le secret DISCORD_WEBHOOK_URL est configure.
+    2) Sinon, relais securise Base44 (fonction discordTradingSend) qui
+       conserve le webhook hors du repo public.
+    Renvoie (succes, info) - info decrit la cause exacte en cas d'echec.
+    """
+    payload = {"username": username, "embeds": [embed]}
+    if webhook_url:
+        try:
+            r = requests.post(webhook_url, json=payload, timeout=15)
+            if r.ok:
+                return True, "ok (webhook direct)"
+            info = f"Webhook direct HTTP {r.status_code}"
+        except Exception as e:
+            info = f"Webhook direct erreur reseau : {e}"
+    else:
+        info = "WEBHOOK ABSENT - le secret DISCORD_WEBHOOK_URL n'est pas configure"
+    # repli sur le relais securise
     try:
-        r = requests.post(
-            webhook_url,
-            json={"username": username, "embeds": [embed]},
-            timeout=15,
-        )
-        if r.ok:
-            return True, "ok"
-        return False, f"Discord a repondu HTTP {r.status_code} - webhook invalide ou supprime"
+        r = requests.post(RELAY_URL, json=payload, timeout=20)
+        d = r.json()
+        if r.ok and d.get("ok"):
+            return True, "ok (relais securise)"
+        return False, f"Relais a repondu : {d.get('error', r.status_code)} [apres: {info}]"
     except Exception as e:
-        return False, f"Erreur reseau : {e}"
+        return False, f"Erreur reseau relais : {e} [apres: {info}]"
+
 
 
 def build_embed(heure, result, state):
