@@ -2,7 +2,9 @@ name: Bot Trading Or XAUUSD
 
 on:
   schedule:
-    - cron: "*/15 * * * *"
+    # Toutes les 15 minutes, avec un decalage de 3 min pour eviter les pics
+    # de charge de GitHub (les tics a l'heure pile sont souvent retardes/annules).
+    - cron: "3,18,33,48 * * * *"
   workflow_dispatch: {}
 
 permissions:
@@ -28,9 +30,10 @@ jobs:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
         run: python bot.py
       - name: Sauvegarder l'etat du bot
+        if: always()   # commit l'etat meme si Discord a echoue (run rouge visible)
         run: |
           git config user.name "Trading Bot"
-          git config user.email "[actions@github.com](mailto:actions@github.com)"
+          git config user.email "actions@github.com"
           git add state.json trades.json
           if git diff --cached --quiet; then
             echo "Rien a commiter"
