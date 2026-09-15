@@ -5,7 +5,7 @@ Bot de trading papier XAU/USD (or) — version autonome, sans dépendance Base44
 Conçu pour tourner via GitHub Actions toutes les 15 minutes.
 
 Stratégie : croisement EMA9/EMA21 + filtre RSI14, gestion du risque par ATR
-(SL 1.5x ATR, TP 2.5x ATR, risque 2% du capital par trade).
+SCALPING 5 min : EMA9/21 + RSI14 + ATR14, SL 1x ATR, TP 1.5x ATR, risque 2% par trade.
 Prix : futures or GC=F (proxy fidèle du spot XAUUSD) via Yahoo Finance.
 Capital papier initial : 50 EUR.
 
@@ -32,8 +32,10 @@ import requests
 STATE_FILE = "state.json"
 TRADES_FILE = "trades.json"
 RISK_PCT = 0.02          # risque par trade : 2% du capital
-SL_ATR = 1.5             # stop loss = 1.5 x ATR
-TP_ATR = 2.5             # take profit = 2.5 x ATR
+# ---- MODE SCALPING : bougies 1 minute, signaux tres frequents ----
+TIMEFRAME = "1m"         # bougies 1 minute (scalping)
+SL_ATR = 1.0             # stop loss = 1 x ATR (resserre pour le scalping)
+TP_ATR = 1.5             # take profit = 1.5 x ATR
 STARTING_EQUITY = 50.0   # capital papier initial en EUR
 PAUSE_THRESHOLD = 5.0    # le bot se met en pause si le capital tombe sous 5 EUR
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0"
@@ -98,27 +100,33 @@ def atr14(highs, lows, closes):
 
 # ------------------------------------------------------------------- données
 
-def fetch_candles(symbol="GC=F", interval="15m", range_="5d"):
-    url = (
-        f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
-        f"?interval={interval}&range={range_}"
+def fetch_candles(symbol="PAXG-USD", interval=TIMEFRAME, range_="2d"):
+    """Bougies PAXG-USD (or spot, proxy du XAU/USD a +/-0.3%) via Coinbase.
+    Donnees temps reel 24/7 — contrairement a Yahoo (retard ~10 min)."""
+    gran = {"1m": 60, "5m": 300, "15m": 900}[TIMEFRAME]
+    r = requests.get(
+        f"https://api.exchange.coinbase.com/products/{symbol}/candles?granularity={gran}",
+        timeout=20,
     )
-    r = requests.get(url, headers={"User-Agent": UA}, timeout=20)
     r.raise_for_status()
-    data = r.json()["chart"]["result"][0]
-    q = data["indicators"]["quote"][0]
-    candles = []
-    for i, ts in enumerate(data["timestamp"]):
-        if q["open"][i] is None or q["close"][i] is None:
-            continue
-        candles.append({
-            "t": ts * 1000,
-            "o": q["open"][i],
-            "h": q["high"][i] if q["high"][i] is not None else q["close"][i],
-            "l": q["low"][i] if q["low"][i] is not None else q["close"][i],
-            "c": q["close"][i],
-        })
+    rows = r.json()  # decroissant : [time_sec, low, high, open, close, volume]
+    candles = [
+        {"t": row[0] * 1000, "o": row[3], "h": row[2], "l": row[1], "c": row[4]}
+        for row in sorted(rows)
+    ]
     return candles
+
+
+def fetch_ticker(symbol="PAXG-USD"):
+    """Dernier prix traite en temps reel (Coinbase)."""
+    try:
+        r = requests.get(
+            f"https://api.exchange.coinbase.com/products/{symbol}/ticker", timeout=10
+        )
+        r.raise_for_status()
+        return float(r.json()["price"])
+    except Exception:
+        return None
 
 
 def fetch_eurusd():
@@ -206,7 +214,7 @@ def build_embed(heure, result, state):
                          f"({sign}{round(perf, 2)} EUR / {perf_pct}% depuis le début)",
                 "inline": True,
             },
-            {"name": "🥇 Or (GC=F)", "value": f"{round(price, 2)} $", "inline": True},
+            {"name": "🥇 Or spot (PAXG)", "value": f"{round(price, 2)} $", "inline": True},
             {
                 "name": "📊 Indicateurs",
                 "value": f"RSI {result['rsi']} · EMA9 {result['ema9']} · "
@@ -216,7 +224,7 @@ def build_embed(heure, result, state):
             {"name": "📌 Position", "value": pos_text, "inline": False},
             {"name": "🔢 Trades", "value": f"{state['trade_count']} trade(s) clôturé(s)", "inline": True},
         ],
-        "footer": {"text": "Bot trading papier — XAU/USD, risque 2%/trade (hébergé GitHub Actions)"},
+        "footer": {"text": "Bot trading papier — SCALPING XAU/USD 5 min, SL 1xATR / TP 1.5xATR, risque 2% (GitHub Actions)"},
     }
 
 
@@ -271,6 +279,7 @@ def run_cycle(state, trades):
     if len(candles) < 25:
         return {"action": "ERROR", "detail": "Pas assez de bougies", "equity": state["equity"], "price": None}
     eurusd = fetch_eurusd()
+    live_price = fetch_ticker()          # prix temps reel pour entrees et SL/TP
 
     closes = [c["c"] for c in candles]
     highs = [c["h"] for c in candles]
@@ -280,9 +289,9 @@ def run_cycle(state, trades):
     rsi = rsi14(closes)
     atr = atr14(highs, lows, closes)
 
-    i = len(candles) - 2          # dernière bougie clôturée
+    i = len(candles) - 1          # Coinbase ne renvoie que des bougies closes : la derniere est exploitable
     last = candles[i]
-    price = last["c"]
+    price = live_price if live_price is not None else last["c"]
 
     cross_up = ema9[i - 1] <= ema21[i - 1] and ema9[i] > ema21[i]
     cross_down = ema9[i - 1] >= ema21[i - 1] and ema9[i] < ema21[i]
@@ -313,16 +322,16 @@ def run_cycle(state, trades):
         }
 
         exit_price, close_reason = None, None
-        c = candles[-1]  # bougie en cours comprise pour le check
+        c = candles[-1]  # derniere bougie close (son H/L couvre les breches passees)
         if state["open_side"] == "LONG":
-            if c["l"] <= state["open_sl"]:
+            if c["l"] <= state["open_sl"] or (live_price is not None and live_price <= state["open_sl"]):
                 exit_price, close_reason = state["open_sl"], "SL"
-            elif c["h"] >= state["open_tp"]:
+            elif c["h"] >= state["open_tp"] or (live_price is not None and live_price >= state["open_tp"]):
                 exit_price, close_reason = state["open_tp"], "TP"
         else:
-            if c["h"] >= state["open_sl"]:
+            if c["h"] >= state["open_sl"] or (live_price is not None and live_price >= state["open_sl"]):
                 exit_price, close_reason = state["open_sl"], "SL"
-            elif c["l"] <= state["open_tp"]:
+            elif c["l"] <= state["open_tp"] or (live_price is not None and live_price <= state["open_tp"]):
                 exit_price, close_reason = state["open_tp"], "TP"
         if exit_price is None and (
             (state["open_side"] == "LONG" and cross_down)
@@ -365,13 +374,13 @@ def run_cycle(state, trades):
     # ---- 2) pas de position -> chercher une entrée
     elif state["status"] == "RUNNING":
         now_ms = datetime.now().timestamp() * 1000
-        if now_ms - last["t"] > 25 * 60 * 1000:
+        if now_ms - last["t"] > 5 * 60 * 1000:
             result["detail"] = "Dernière bougie trop ancienne (marché fermé ?)"
         else:
             side, reason = None, ""
-            if cross_up and 50 < rsi < 75:
+            if cross_up and 45 < rsi < 75:
                 side, reason = "LONG", f"EMA9 > EMA21 (croisement haussier), RSI {round(rsi)}"
-            elif cross_down and 25 < rsi < 50:
+            elif cross_down and 25 < rsi < 55:
                 side, reason = "SHORT", f"EMA9 < EMA21 (croisement baissier), RSI {round(rsi)}"
 
             if side:
@@ -413,7 +422,7 @@ def run_cycle(state, trades):
                 )
 
     # ---- 3) sauvegarde de l'etat a chaque check
-    state["last_price"] = round(price, 2)
+    state["last_price"] = round(price, 2)   # prix temps reel (ticker Coinbase)
     state["eurusd"] = round(eurusd, 4)
     state["last_cycle"] = datetime.now(ZoneInfo("Europe/Paris")).isoformat()
     save_json(STATE_FILE, state)
