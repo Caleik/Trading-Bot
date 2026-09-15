@@ -4,7 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Panneau Bot Trading Or XAU/USD</title>
-<script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/lightweight-charts@5.2.1/dist/lightweight-charts.standalone.production.js"></script>
+<script>if (typeof LightweightCharts === 'undefined') { document.write('<script src="https://unpkg.com/lightweight-charts@5.2.1/dist/lightweight-charts.standalone.production.js"><\/script>'); }</script>
 <style>
   :root { --bg:#0d1117; --card:#161b22; --border:#30363d; --text:#e6edf3; --muted:#8b949e; --gold:#f0b429; --blue:#58a6ff; --green:#3fb950; --red:#f85149; }
   * { box-sizing:border-box; margin:0; padding:0; }
@@ -26,7 +27,7 @@
   .short { background:rgba(248,81,73,.15); color:var(--red); }
   .none { background:rgba(139,148,158,.15); color:var(--muted); }
   h2 { font-size:15px; margin:20px 0 10px; color:var(--gold); display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap; }
-  canvas { width:100%; height:220px; background:var(--card); border:1px solid var(--border); border-radius:10px; }
+  #chart { width:100%; height:220px; background:var(--card); border:1px solid var(--border); border-radius:10px; }
   table { width:100%; border-collapse:collapse; font-size:13px; }
   th,td { padding:8px 10px; text-align:left; border-bottom:1px solid var(--border); white-space:nowrap; }
   th { color:var(--muted); font-weight:600; font-size:12px; text-transform:uppercase; }
@@ -310,18 +311,18 @@ async function buildLiveCharts() {
   const LWC = LightweightCharts;
   const base = chartOpts();
   LW.main = LWC.createChart(document.getElementById('livewrap'), base);
-  LW.candles = LW.main.addCandlestickSeries({
+  LW.candles = LW.main.addSeries(LightweightCharts.CandlestickSeries, {
     upColor: '#3fb950', downColor: '#f85149', wickUpColor: '#3fb950', wickDownColor: '#f85149',
     borderVisible: false, priceFormat: { type: 'price', precision: 2, minMove: 0.01 }
   });
-  LW.e9s = LW.main.addLineSeries({ color: '#f0b429', lineWidth: 2, priceLine: false, lastValueVisible: false, crosshairMarkerVisible: false });
-  LW.e21s = LW.main.addLineSeries({ color: '#58a6ff', lineWidth: 2, priceLine: false, lastValueVisible: false, crosshairMarkerVisible: false });
+  LW.e9s = LW.main.addSeries(LightweightCharts.LineSeries, { color: '#f0b429', lineWidth: 2, priceLine: false, lastValueVisible: false, crosshairMarkerVisible: false });
+  LW.e21s = LW.main.addSeries(LightweightCharts.LineSeries, { color: '#58a6ff', lineWidth: 2, priceLine: false, lastValueVisible: false, crosshairMarkerVisible: false });
   LW.rsi = LWC.createChart(document.getElementById('rsiwrap'), chartOpts());
-  LW.rsiS = LW.rsi.addLineSeries({ color: '#58a6ff', lineWidth: 2, priceLine: false, lastValueVisible: false, crosshairMarkerVisible: false });
+  LW.rsiS = LW.rsi.addSeries(LightweightCharts.LineSeries, { color: '#58a6ff', lineWidth: 2, priceLine: false, lastValueVisible: false, crosshairMarkerVisible: false });
   LW.rsiS.createPriceLine({ price: 70, color: '#f85149', lineWidth: 1, lineStyle: LWC.LineStyle.Dashed, axisLabelVisible: false });
   LW.rsiS.createPriceLine({ price: 30, color: '#3fb950', lineWidth: 1, lineStyle: LWC.LineStyle.Dashed, axisLabelVisible: false });
   LW.atr = LWC.createChart(document.getElementById('atrwrap'), chartOpts());
-  LW.atrS = LW.atr.addLineSeries({ color: '#f0b429', lineWidth: 2, priceLine: false, lastValueVisible: false, crosshairMarkerVisible: false });
+  LW.atrS = LW.atr.addSeries(LightweightCharts.LineSeries, { color: '#f0b429', lineWidth: 2, priceLine: false, lastValueVisible: false, crosshairMarkerVisible: false });
   // synchronisation du zoom/navigation entre les 3 graphiques
   const group = [LW.main, LW.rsi, LW.atr];
   group.forEach(src => {
