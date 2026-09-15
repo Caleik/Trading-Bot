@@ -240,7 +240,7 @@ const TFS = [
   {label:'1 jour', g:86400},
 ];
 let curTF = 2; // 15 min par défaut (cycle du bot)
-const LW = { ready:false, main:null, rsi:null, atr:null, candles:null, e9s:null, e21s:null, rsiS:null, atrS:null, syncing:false };
+const LW = { ready:false, main:null, rsi:null, atr:null, candles:null, e9s:null, e21s:null, rsiS:null, atrS:null, syncing:false, fitted:false };
 
 // --- indicateurs (mêmes formules que le bot : Wilder pour RSI/ATR) ---
 function ema(values, n) {
@@ -358,6 +358,7 @@ async function refreshLive() {
     LW.e21s.setData(bars.map((b, i) => e21[i] == null ? null : { time: T(b), value: e21[i] }).filter(Boolean));
     LW.rsiS.setData(bars.map((b, i) => rr[i] == null ? null : { time: T(b), value: rr[i] }).filter(Boolean));
     LW.atrS.setData(bars.map((b, i) => aa[i] == null ? null : { time: T(b), value: aa[i] }).filter(Boolean));
+    if (!LW.fitted) { LW.main.timeScale().fitContent(); LW.fitted = true; }
     const last = bars[bars.length - 1];
     const chg = last.c - bars[0].c, chgPct = bars[0].c ? chg / bars[0].c * 100 : 0;
     document.getElementById('liveprice').textContent = fmt(last.c) + ' $';
@@ -380,7 +381,7 @@ function buildTFButtons() {
     const b = document.createElement('div');
     b.className = 'tf' + (i === curTF ? ' active' : '');
     b.textContent = tf.label;
-    b.onclick = () => { curTF = i; [...row.children].forEach((el, j) => el.classList.toggle('active', j === i)); refreshLive(); };
+    b.onclick = () => { curTF = i; LW.fitted = false; [...row.children].forEach((el, j) => el.classList.toggle('active', j === i)); refreshLive(); };
     row.appendChild(b);
   });
   const reset = document.createElement('div');
