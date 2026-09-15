@@ -47,6 +47,13 @@
   #rsiwrap, #atrwrap { height:110px; }
   .hidden { display:none; }
   .hint { font-size:12px; color:var(--muted); text-align:center; margin-bottom:10px; }
+  .rng { position:relative; height:10px; border-radius:5px; background:linear-gradient(90deg, rgba(63,185,80,.45), rgba(33,38,45,.6), rgba(248,81,73,.45)); margin:16px 0 4px; }
+  .rng .mark { position:absolute; top:-5px; width:3px; height:20px; background:var(--gold); border-radius:2px; box-shadow:0 0 6px rgba(240,180,41,.8); }
+  .rnglab { display:flex; justify-content:space-between; font-size:12px; color:var(--muted); }
+  .posgrid { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:10px; margin-top:12px; }
+  .posgrid .k { font-size:12px; color:var(--muted); text-transform:uppercase; letter-spacing:.5px; }
+  .posgrid .v { font-size:17px; font-weight:700; margin-top:3px; }
+  .empty { background:var(--card); border:1px dashed var(--border); border-radius:10px; padding:34px 16px; text-align:center; color:var(--muted); font-size:14px; }
 </style>
 </head>
 <body>
@@ -56,6 +63,7 @@
   <div class="tabs">
     <div class="tab active" id="tabbtn-1" onclick="switchTab(1)">💼 Portefeuille</div>
     <div class="tab" id="tabbtn-2" onclick="switchTab(2)">📈 Live marché</div>
+    <div class="tab" id="tabbtn-3" onclick="switchTab(3)">📌 Positions</div>
   </div>
 
   <!-- ================= ONGLET 1 : PORTEFEUILLE ================= -->
@@ -100,6 +108,17 @@
     <div class="hint">👍 Pince à deux doigts pour zoomer · glisse pour naviguer dans le temps</div>
   </div>
 
+  <!-- ================= ONGLET 3 : POSITIONS ================= -->
+  <div id="tab-3" class="hidden">
+    <div class="sub"><span class="spinner"></span><span id="posupd">Chargement des positions…</span></div>
+    <div id="pospanel"></div>
+    <h2>🧾 Derniers trades clôturés</h2>
+    <div class="tbl"><table>
+      <thead><tr><th>Fermé le</th><th>Sens</th><th>Entrée → Sortie</th><th>Motif</th><th>P&L (€)</th></tr></thead>
+      <tbody id="tbody3"></tbody>
+    </table></div>
+  </div>
+
   <div class="footer">
     Panneau d'affichage du bot de trading IA (stratégie EMA9/EMA21 + RSI + ATR, risque 2%/trade).<br>
     💼 Données du bot : <code>state.json</code> / <code>trades.json</code> commités à chaque cycle GitHub Actions (actualisation 60 s).<br>
@@ -117,11 +136,12 @@ const TZ_OFFSET_SEC = -new Date().getTimezoneOffset() * 60; // affiche les heure
 
 // ===== ONGLETS =====
 function switchTab(n) {
-  for (const i of [1,2]) {
+  for (const i of [1,2,3]) {
     document.getElementById('tab-'+i).classList.toggle('hidden', i !== n);
     document.getElementById('tabbtn-'+i).classList.toggle('active', i === n);
   }
   if (n === 2) { if (LW.ready) refreshLive(); else buildLiveCharts().then(refreshLive); }
+  if (n === 3) refreshPositions();
 }
 
 // ===== UTILS COMMUNS =====
@@ -400,12 +420,68 @@ async function checkOanda() {
   } catch (e) {}
 }
 
+// ============================================================
+//  ONGLET 3 — POSITIONS EN COURS (P&L live + barre SL/TP)
+// ============================================================
+async function refreshPositions() {
+  const upd = document.getElementById('posupd');
+  try {
+    const [state, trades, tick] = await Promise.all([
+      fetchJson(RAW + '/state.json'),
+      fetchJson(RAW + '/trades.json'),
+      fetch('https://api.exchange.coinbase.com/products/PAXG-USD/ticker').then(r => r.json()),
+    ]);
+    let eurusd = state.eurusd;
+    if (!eurusd) { try { const fx = await (await fetch('https://api.frankfurter.app/latest?from=USD&to=EUR')).json(); eurusd = 1 / (fx.rates && fx.rates.EUR || 0.867); } catch (e) { eurusd = 1.153; } }
+    const live = parseFloat(tick.price);
+    const panel = document.getElementById('pospanel');
+    const side = state.open_side;
+    if (side === 'LONG' || side === 'SHORT') {
+      const d = side === 'LONG' ? 1 : -1;
+      const entry = state.open_entry, sl = state.open_sl, tp = state.open_tp, size = state.open_size;
+      const plEur = (live - entry) * d * size / eurusd;
+      const plPct = entry ? ((live - entry) * d / entry) * 100 : 0;
+      const span = Math.abs(tp - sl) || 1;
+      const posBar = side === 'LONG' ? (live - sl) / span : (sl - live) / span;
+      const markPct = Math.max(2, Math.min(98, posBar * 100));
+      panel.innerHTML = `
+        <div class="card">
+          <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px">
+            <div style="font-size:16px; font-weight:700"><span class="badge ${side === 'LONG' ? 'long' : 'short'}">${side === 'LONG' ? '🟢 ACHAT (LONG)' : '🔴 VENTE (SHORT)'}</span>
+            <span style="color:var(--muted); font-weight:400; font-size:13px">ouvert ${dateFr(state.open_time)}</span></div>
+          </div>
+          <div style="margin-top:8px; font-size:13px; color:var(--muted)">${state.open_reason || ''}</div>
+          <div class="posgrid">
+            <div><div class="k">Entrée</div><div class="v">${fmt(entry)} $</div></div>
+            <div><div class="k">Cours live</div><div class="v">${fmt(live)} $</div></div>
+            <div><div class="k">Taille</div><div class="v">${fmt(size, 3)} oz</div></div>
+            <div><div class="k">P&L flottant</div><div class="v"><span class="${plEur >= 0 ? 'gain' : 'perte'}">${plEur >= 0 ? '+' : ''}${fmt(plEur)} € (${plPct >= 0 ? '+' : ''}${fmt(plPct, 2)} %)</span></div></div>
+          </div>
+          <div class="rng"><div class="mark" style="left:${markPct}%"></div></div>
+          <div class="rnglab"><span>🎯 TP ${fmt(tp)} $</span><span>🛑 SL ${fmt(sl)} $</span></div>
+        </div>`;
+      upd.textContent = `Position suivie · cours actualisé à ${new Date().toLocaleTimeString('fr-FR')} · rafraîchissement auto 30 s`;
+    } else {
+      panel.innerHTML = `<div class="empty">⏳ Aucune position en cours<br><span style="font-size:12px">Le bot surveille les croisements EMA 9/21 avec confirmation RSI — tu recevras un message Discord dès l'ouverture d'un trade.</span></div>`;
+      upd.textContent = state.last_cycle ? `Bot en surveillance · dernier cycle à ${dateFr(state.last_cycle)} · actualisation 30 s` : '';
+    }
+    const closed = (trades || []).filter(t => t.status === 'CLOSED').slice(-8).reverse();
+    document.getElementById('tbody3').innerHTML = closed.length ? closed.map(t => `
+      <tr><td>${dateFr(t.closed_at)}</td><td>${t.side}</td><td>${fmt(t.entry_price)} → ${t.exit_price != null ? fmt(t.exit_price) : '—'}</td>
+      <td>${t.close_reason || '—'}</td><td class="${(t.pnl_eur || 0) >= 0 ? 'gain' : 'perte'}">${(t.pnl_eur || 0) >= 0 ? '+' : ''}${fmt(t.pnl_eur)} €</td></tr>`).join('')
+      : '<tr><td colspan="5" style="color:var(--muted); text-align:center; padding:16px">Aucun trade clôturé pour l\u2019instant</td></tr>';
+  } catch (e) {
+    upd.textContent = 'Erreur de chargement des positions : ' + e.message;
+  }
+}
+
 // ===== DÉMARRAGE =====
 buildTFButtons();
 refresh();
 checkOanda();
 setInterval(refresh, 60000);
 setInterval(() => { if (!document.getElementById('tab-2').classList.contains('hidden') && LW.ready) refreshLive(); }, 30000);
+setInterval(() => { if (!document.getElementById('tab-3').classList.contains('hidden')) refreshPositions(); }, 30000);
 </script>
 </body>
 </html>
