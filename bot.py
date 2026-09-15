@@ -136,16 +136,18 @@ def fetch_eurusd():
 
 def post_discord(webhook_url, embed, username="Bot Or 🤖"):
     if not webhook_url:
-        return False
+        return False, "WEBHOOK ABSENT - le secret DISCORD_WEBHOOK_URL n'est pas configure"
     try:
         r = requests.post(
             webhook_url,
             json={"username": username, "embeds": [embed]},
             timeout=15,
         )
-        return r.ok
-    except Exception:
-        return False
+        if r.ok:
+            return True, "ok"
+        return False, f"Discord a repondu HTTP {r.status_code} - webhook invalide ou supprime"
+    except Exception as e:
+        return False, f"Erreur reseau : {e}"
 
 
 def build_embed(heure, result, state):
@@ -374,10 +376,15 @@ def main():
 
     heure = datetime.now(ZoneInfo("Europe/Paris")).strftime("%H:%M")
     webhook = os.environ.get("DISCORD_WEBHOOK_URL", "")
-    result["posted"] = post_discord(webhook, build_embed(heure, result, state))
+    ok, info = post_discord(webhook, build_embed(heure, result, state))
+    result["posted"] = ok
+    result["discord_info"] = info
     result["eurusd"] = round(eurusd, 4)
 
     print(json.dumps(result, ensure_ascii=False))
+    if not ok:
+        print(f"ECHEC ENVOI DISCORD : {info}")
+        sys.exit(1)
 
 
 if __name__ == "__main__":
