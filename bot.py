@@ -367,6 +367,8 @@ def main():
                 )
 
     # ---- 3) sauvegarde + compte-rendu Discord
+    state["last_price"] = round(price, 2)
+    state["last_cycle"] = datetime.now(ZoneInfo("Europe/Paris")).isoformat()
     save_json(STATE_FILE, state)
     save_json(TRADES_FILE, trades)
 
