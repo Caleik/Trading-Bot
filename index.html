@@ -5,25 +5,28 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Panneau Bot Trading Or XAU/USD</title>
 <style>
-  :root { --bg:#0d1117; --card:#161b22; --border:#30363d; --text:#e6edf3; --muted:#8b949e; --gold:#f0b429; --green:#3fb950; --red:#f85149; }
+  :root { --bg:#0d1117; --card:#161b22; --border:#30363d; --text:#e6edf3; --muted:#8b949e; --gold:#f0b429; --blue:#58a6ff; --green:#3fb950; --red:#f85149; }
   * { box-sizing:border-box; margin:0; padding:0; }
   body { font-family:-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; background:var(--bg); color:var(--text); padding:16px; }
   .wrap { max-width:900px; margin:0 auto; }
-  h1 { font-size:20px; display:flex; align-items:center; gap:10px; margin-bottom:4px; }
-  .sub { color:var(--muted); font-size:13px; margin-bottom:18px; }
+  h1 { font-size:20px; display:flex; align-items:center; gap:10px; margin-bottom:4px; flex-wrap:wrap; }
+  .sub { color:var(--muted); font-size:13px; margin-bottom:14px; }
+  .tabs { display:flex; gap:8px; margin-bottom:16px; }
+  .tab { flex:1; text-align:center; padding:10px; border-radius:10px; background:var(--card); border:1px solid var(--border); color:var(--muted); font-weight:700; font-size:14px; cursor:pointer; }
+  .tab.active { border-color:var(--gold); color:var(--gold); background:rgba(240,180,41,.08); }
   .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:12px; margin-bottom:16px; }
   .card { background:var(--card); border:1px solid var(--border); border-radius:10px; padding:14px; }
   .card .label { font-size:12px; color:var(--muted); text-transform:uppercase; letter-spacing:.5px; margin-bottom:6px; }
   .card .value { font-size:24px; font-weight:700; }
-  .pos { font-size:14px; }
-  .pos .row { display:flex; justify-content:space-between; padding:3px 0; }
+  .pos .row { display:flex; justify-content:space-between; padding:3px 0; font-size:14px; }
   .pos .row span:first-child { color:var(--muted); }
   .badge { display:inline-block; padding:2px 10px; border-radius:999px; font-size:12px; font-weight:700; }
   .long { background:rgba(63,185,80,.15); color:var(--green); }
   .short { background:rgba(248,81,73,.15); color:var(--red); }
   .none { background:rgba(139,148,158,.15); color:var(--muted); }
-  h2 { font-size:15px; margin:20px 0 10px; color:var(--gold); }
+  h2 { font-size:15px; margin:20px 0 10px; color:var(--gold); display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap; }
   canvas { width:100%; height:220px; background:var(--card); border:1px solid var(--border); border-radius:10px; }
+  canvas.small { height:120px; }
   table { width:100%; border-collapse:collapse; font-size:13px; }
   th,td { padding:8px 10px; text-align:left; border-bottom:1px solid var(--border); white-space:nowrap; }
   th { color:var(--muted); font-weight:600; font-size:12px; text-transform:uppercase; }
@@ -33,51 +36,89 @@
   .err { background:rgba(248,81,73,.1); border:1px solid var(--red); border-radius:10px; padding:14px; margin:20px 0; font-size:14px; line-height:1.6; }
   .spinner { display:inline-block; width:14px; height:14px; border:2px solid var(--muted); border-top-color:var(--gold); border-radius:50%; animation:spin 1s linear infinite; vertical-align:-2px; margin-right:6px; }
   @keyframes spin { to { transform:rotate(360deg); } }
+  .tfrow { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:10px; }
+  .tf { padding:7px 12px; border-radius:8px; background:var(--card); border:1px solid var(--border); color:var(--muted); font-size:13px; font-weight:700; cursor:pointer; }
+  .tf.active { border-color:var(--gold); color:var(--gold); background:rgba(240,180,41,.08); }
+  .legend { display:flex; gap:14px; flex-wrap:wrap; font-size:12px; color:var(--muted); margin-bottom:8px; }
+  .dot { display:inline-block; width:10px; height:10px; border-radius:50%; margin-right:4px; vertical-align:-1px; }
+  .hidden { display:none; }
 </style>
 </head>
 <body>
 <div class="wrap">
   <h1>🥇 Panneau Bot Trading Or <span style="font-size:12px;color:var(--muted);font-weight:400">XAU/USD · compte papier</span></h1>
-  <div class="sub" id="lastupd"><span class="spinner"></span>Chargement des données du bot…</div>
 
-  <div class="err" id="errbox" style="display:none"></div>
-
-  <div class="grid" id="cards">
-    <div class="card"><div class="label">💰 Capital</div><div class="value" id="equity">—</div><div class="sub" id="perf">—</div></div>
-    <div class="card"><div class="label">📊 Trades clôturés</div><div class="value" id="tcount">—</div><div class="sub" id="winrate">—</div></div>
-    <div class="card"><div class="label">🥇 Or (GC=F)</div><div class="value" id="goldp">—</div><div class="sub" id="lastcycle">—</div></div>
-    <div class="card pos"><div class="label">📌 Position en cours <span id="posbadge" class="badge none">AUCUNE</span></div><div id="posbody" class="pos" style="margin-top:6px">—</div></div>
+  <div class="tabs">
+    <div class="tab active" id="tabbtn-1" onclick="switchTab(1)">💼 Portefeuille</div>
+    <div class="tab" id="tabbtn-2" onclick="switchTab(2)">📈 Live marché</div>
   </div>
 
-  <h2>📈 Évolution du capital</h2>
-  <canvas id="chart" width="860" height="220"></canvas>
+  <!-- ================= ONGLET 1 : PORTEFEUILLE ================= -->
+  <div id="tab-1">
+    <div class="sub" id="lastupd"><span class="spinner"></span>Chargement des données du bot…</div>
+    <div class="err" id="errbox" style="display:none"></div>
+    <div class="grid" id="cards">
+      <div class="card"><div class="label">💰 Capital</div><div class="value" id="equity">—</div><div class="sub" id="perf">—</div></div>
+      <div class="card"><div class="label">📊 Trades clôturés</div><div class="value" id="tcount">—</div><div class="sub" id="winrate">—</div></div>
+      <div class="card"><div class="label">🥇 Or (GC=F)</div><div class="value" id="goldp">—</div><div class="sub" id="lastcycle">—</div></div>
+      <div class="card pos"><div class="label">📌 Position <span id="posbadge" class="badge none">AUCUNE</span></div><div id="posbody" class="pos" style="margin-top:6px">—</div></div>
+    </div>
+    <h2>📈 Évolution du capital</h2>
+    <canvas id="chart" width="860" height="220"></canvas>
+    <h2>🧾 Historique des trades</h2>
+    <div class="tbl"><table>
+      <thead><tr><th>Ouvert le</th><th>Sens</th><th>Taille (oz)</th><th>Entrée</th><th>Sortie</th><th>Motif clôture</th><th>Raison d'ouverture</th><th>P&L (€)</th></tr></thead>
+      <tbody id="tbody"></tbody>
+    </table></div>
+  </div>
 
-  <h2>🧾 Historique des trades</h2>
-  <div class="tbl"><table>
-    <thead><tr><th>Ouvert le</th><th>Sens</th><th>Taille (oz)</th><th>Entrée</th><th>Sortie</th><th>Motif clôture</th><th>Raison d'ouverture</th><th>P&L (€)</th></tr></thead>
-    <tbody id="tbody"></tbody>
-  </table></div>
+  <!-- ================= ONGLET 2 : LIVE MARCHÉ ================= -->
+  <div id="tab-2" class="hidden">
+    <div class="sub"><span class="spinner"></span><span id="liveupd">Chargement du cours de l'or…</span></div>
 
-  <div class="footer" id="footer">
+    <div class="grid">
+      <div class="card"><div class="label">🥇 Cours de l'or (live)</div><div class="value" id="liveprice">—</div><div class="sub" id="livechg">—</div></div>
+      <div class="card"><div class="label">🤖 Signal (logique du bot)</div><div class="value" style="font-size:18px"><span id="livesignal" class="badge none">—</span></div><div class="sub" id="livesigdetail">—</div></div>
+    </div>
+
+    <div class="tfrow" id="tfrow"></div>
+    <div class="legend">
+      <span><span class="dot" style="background:var(--green)"></span>hausse</span>
+      <span><span class="dot" style="background:var(--red)"></span>baisse</span>
+      <span><span class="dot" style="background:var(--gold)"></span>EMA 9</span>
+      <span><span class="dot" style="background:var(--blue)"></span>EMA 21</span>
+    </div>
+    <canvas id="livechart" width="860" height="260"></canvas>
+    <div class="legend" style="margin-top:12px"><span>RSI 14 — zones 30 (survendu) / 70 (suracheté)</span></div>
+    <canvas id="rsichart" class="small" width="860" height="120"></canvas>
+    <div class="legend" style="margin-top:12px"><span>ATR 14 — volatilité (utilisée pour le SL 1.5x / TP 2.5x)</span></div>
+    <canvas id="atrchart" class="small" width="860" height="120"></canvas>
+  </div>
+
+  <div class="footer">
     Panneau d'affichage du bot de trading IA (stratégie EMA9/EMA21 + RSI + ATR, risque 2%/trade).<br>
-    Données : fichiers <code>state.json</code> / <code>trades.json</code> commités par le bot à chaque cycle GitHub Actions. Actualisation automatique toutes les 60 s.<br>
+    💼 Données du bot : <code>state.json</code> / <code>trades.json</code> commités à chaque cycle GitHub Actions (actualisation 60 s).<br>
+    📈 Cours live : or physique via PAXG/USD (Coinbase) — suit le spot XAU/USD à ±0,3% près (actualisation 30 s).<br>
     <span id="oanda">Compte broker (OANDA) : non connecté — mode compte papier.</span>
   </div>
 </div>
 
 <script>
-// ===== CONFIGURATION — à adapter si ton repo GitHub est différent =====
-const OWNER = 'Caleik';
-const REPO  = 'Trading-Bot';
-const BRANCH = 'main';
+// ===== CONFIG GÉNÉRALE =====
+const OWNER = 'Caleik', REPO = 'Trading-Bot', BRANCH = 'main';
 const RAW = `https://raw.githubusercontent.com/${OWNER}/${REPO}/${BRANCH}`;
+const LIVE_PAIR = 'PAXG-USD';
 
-async function fetchJson(path) {
-  const r = await fetch(`${RAW}/${path}?t=${Date.now()}`, { cache: 'no-store' });
-  if (!r.ok) throw new Error(`HTTP ${r.status} sur ${path}`);
-  return r.json();
+// ===== ONGLETS =====
+function switchTab(n) {
+  for (const i of [1,2]) {
+    document.getElementById('tab-'+i).classList.toggle('hidden', i !== n);
+    document.getElementById('tabbtn-'+i).classList.toggle('active', i === n);
+  }
+  if (n === 2) refreshLive();
 }
 
+// ===== UTILS COMMUNS =====
 function fmt(n, d=2) { return Number(n).toLocaleString('fr-FR', {minimumFractionDigits:d, maximumFractionDigits:d}); }
 function dateFr(iso) {
   if (!iso) return '—';
@@ -85,33 +126,37 @@ function dateFr(iso) {
   return d.toLocaleDateString('fr-FR', {day:'2-digit', month:'2-digit'}) + ' ' + d.toLocaleTimeString('fr-FR', {hour:'2-digit', minute:'2-digit'});
 }
 
+// ============================================================
+//  ONGLET 1 — PORTEFEUILLE (données commitées par le bot)
+// ============================================================
+async function fetchJson(url) {
+  const r = await fetch(url + (url.includes('?') ? '&' : '?') + 't=' + Date.now(), { cache:'no-store' });
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  return r.json();
+}
 function renderError(msg) {
   const box = document.getElementById('errbox');
   box.style.display = 'block';
-  box.innerHTML = `<b>⚠️ Impossible de charger les données du bot.</b><br>${msg}<br><br>Vérifie que le dépôt GitHub <b>${OWNER}/${REPO}</b> est bien en visibilité <b>Public</b> (Settings → tout en bas → Danger Zone → Change visibility), et que les fichiers <code>state.json</code> et <code>trades.json</code> existent (le bot les crée à son premier cycle).`;
-  document.getElementById('lastupd').innerHTML = 'Erreur de chargement.';
+  box.innerHTML = `<b>⚠️ Impossible de charger les données du bot.</b><br>${msg}<br>Vérifie que le dépôt <b>${OWNER}/${REPO}</b> est en visibilité <b>Public</b> et que les fichiers <code>state.json</code> / <code>trades.json</code> existent (créés au premier cycle du bot).`;
+  document.getElementById('lastupd').textContent = 'Erreur de chargement.';
 }
-
 function drawChart(trades, startingEquity) {
   const c = document.getElementById('chart'), ctx = c.getContext('2d');
   const W = c.width, H = c.height, pad = 34;
   const closed = [...trades].filter(t => t.status === 'CLOSED').sort((a,b) => (a.closed_at||'').localeCompare(b.closed_at||''));
   let eq = startingEquity;
-  const points = [{x:0, v:eq, label:'Départ'}];
-  closed.forEach(t => { eq += t.pnl_eur || 0; points.push({x:0, v:eq, label:dateFr(t.closed_at)}); });
-  if (points.length === 1) points.push(points[0]); // ligne plate au départ
+  const points = [{v:eq}];
+  closed.forEach(t => { eq += t.pnl_eur || 0; points.push({v:eq}); });
+  if (points.length === 1) points.push(points[0]);
   const vals = points.map(p => p.v);
   const min = Math.min(...vals) - 1, max = Math.max(...vals) + 1;
   ctx.clearRect(0,0,W,H);
-  // grille + labels
   ctx.strokeStyle = '#30363d'; ctx.fillStyle = '#8b949e'; ctx.font = '11px sans-serif'; ctx.lineWidth = 1;
   for (let i = 0; i <= 4; i++) {
     const y = pad/2 + (H - pad) * i / 4;
-    const v = max - (max - min) * i / 4;
     ctx.beginPath(); ctx.moveTo(pad, y); ctx.lineTo(W - 4, y); ctx.stroke();
-    ctx.fillText(fmt(v,1) + ' €', 4, y + 3);
+    ctx.fillText(fmt(max - (max - min) * i / 4, 1) + ' €', 4, y + 3);
   }
-  // courbe
   ctx.strokeStyle = '#f0b429'; ctx.lineWidth = 2.5; ctx.beginPath();
   points.forEach((p, i) => {
     const x = pad + (W - pad - 10) * i / (points.length - 1);
@@ -119,42 +164,29 @@ function drawChart(trades, startingEquity) {
     i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
   });
   ctx.stroke();
-  // points
   points.forEach((p, i) => {
     const x = pad + (W - pad - 10) * i / (points.length - 1);
     const y = pad/2 + (H - pad) * (1 - (p.v - min) / (max - min));
     ctx.fillStyle = p.v >= startingEquity ? '#3fb950' : '#f85149';
     ctx.beginPath(); ctx.arc(x, y, 3, 0, 7); ctx.fill();
   });
-  // label dernier point
-  const lastP = points[points.length-1];
-  ctx.fillStyle = '#e6edf3'; ctx.font = 'bold 12px sans-serif';
-  ctx.fillText(fmt(lastP.v) + ' €', W - 74, pad/2 + (H-pad)*(1-(lastP.v-min)/(max-min)) - 8);
 }
-
 async function refresh() {
   const lu = document.getElementById('lastupd');
   try {
-    const [state, trades] = await Promise.all([fetchJson('state.json'), fetchJson('trades.json')]);
+    const [state, trades] = await Promise.all([fetchJson(RAW + '/state.json'), fetchJson(RAW + '/trades.json')]);
     document.getElementById('errbox').style.display = 'none';
-
-    const eq = state.equity ?? 50;
-    const start = state.starting_equity ?? 50;
-    const perf = eq - start;
-    const perfPct = start ? (perf / start * 100) : 0;
+    const eq = state.equity ?? 50, start = state.starting_equity ?? 50;
+    const perf = eq - start, perfPct = start ? perf / start * 100 : 0;
     document.getElementById('equity').textContent = fmt(eq) + ' €';
-    document.getElementById('perf').innerHTML = `<span class="${perf>=0?'gain':'perte'}">${perf>=0?'+':''}${fmt(perf)} € (${perf>=0?'+':''}${fmt(perfPct,1)} %) depuis le début</span>`;
-
+    document.getElementById('perf').innerHTML = `<span class="${perf>=0?'gain':'perte'}">${perf>=0?'+':''}${fmt(perf)} € (${perf>=0?'+':''}${fmt(perfPct,1)} %)</span>`;
     const closed = (trades||[]).filter(t => t.status === 'CLOSED');
     const wins = closed.filter(t => (t.pnl_eur||0) > 0).length;
     document.getElementById('tcount').textContent = state.trade_count ?? closed.length;
-    document.getElementById('winrate').textContent = closed.length ? `${wins}/${closed.length} gagnants (${Math.round(wins/closed.length*100)} %)` : 'Aucun trade clôturé pour l\\u2019instant';
-
+    document.getElementById('winrate').textContent = closed.length ? `${wins}/${closed.length} gagnants (${Math.round(wins/closed.length*100)} %)` : 'Aucun trade clôturé pour l\u2019instant';
     document.getElementById('goldp').textContent = state.last_price ? fmt(state.last_price) + ' $' : '—';
     document.getElementById('lastcycle').textContent = 'Statut : ' + (state.status === 'RUNNING' ? 'actif ✅' : 'en pause ⏸') + (state.last_cycle ? ' · ' + dateFr(state.last_cycle) : '');
-
-    const badge = document.getElementById('posbadge');
-    const body = document.getElementById('posbody');
+    const badge = document.getElementById('posbadge'), body = document.getElementById('posbody');
     if (state.open_side === 'LONG' || state.open_side === 'SHORT') {
       badge.textContent = state.open_side;
       badge.className = 'badge ' + (state.open_side === 'LONG' ? 'long' : 'short');
@@ -165,19 +197,14 @@ async function refresh() {
          <div class="row"><span>Take profit</span><span>${fmt(state.open_tp)} $</span></div>
          <div class="row"><span>Ouverte le</span><span>${dateFr(state.open_time)}</span></div>`;
     } else {
-      badge.textContent = 'AUCUNE';
-      badge.className = 'badge none';
-      body.innerHTML = '<div class="row"><span>—</span><span>En attente d\\u2019un signal</span></div>';
+      badge.textContent = 'AUCUNE'; badge.className = 'badge none';
+      body.innerHTML = '<div class="row"><span>—</span><span>En attente d\u2019un signal</span></div>';
     }
-
     drawChart(trades || [], start);
-
     const tb = document.getElementById('tbody');
     tb.innerHTML = '';
     const ordered = [...(trades||[])].reverse();
-    if (!ordered.length) {
-      tb.innerHTML = '<tr><td colspan="8" style="color:var(--muted)">Aucun trade pour le moment — le bot attend un signal EMA/RSI.</td></tr>';
-    }
+    if (!ordered.length) tb.innerHTML = '<tr><td colspan="8" style="color:var(--muted)">Aucun trade pour le moment — le bot attend un signal EMA/RSI.</td></tr>';
     ordered.slice(0, 30).forEach(t => {
       const tr = document.createElement('tr');
       const pnl = t.pnl_eur;
@@ -192,27 +219,190 @@ async function refresh() {
          <td class="${pnl==null?'':(pnl>=0?'gain':'perte')}">${pnl==null?'—':(pnl>=0?'+':'')+fmt(pnl)}</td>`;
       tb.appendChild(tr);
     });
+    lu.textContent = 'Dernière actualisation : ' + new Date().toLocaleTimeString('fr-FR') + ' · données commitées à chaque cycle (15 min)';
+  } catch (e) { renderError(e.message); }
+}
 
-    lu.textContent = 'Dernière actualisation : ' + new Date().toLocaleTimeString('fr-FR') + ' · données commitées à chaque cycle (toutes les 15 min)';
+// ============================================================
+//  ONGLET 2 — LIVE MARCHÉ (or via Coinbase PAXG-USD)
+// ============================================================
+const TFS = [
+  {label:'1 min',  g:60},
+  {label:'5 min',  g:300},
+  {label:'15 min', g:900},
+  {label:'1 h',    g:3600},
+  {label:'6 h',    g:21600},
+  {label:'1 jour', g:86400},
+];
+let curTF = 2; // 15 min par défaut (cycle du bot)
+
+// --- indicateurs (mêmes formules que le bot : Wilder pour RSI/ATR) ---
+function ema(values, n) {
+  const k = 2 / (n + 1);
+  const out = [];
+  let sum = 0;
+  for (let i = 0; i < values.length; i++) {
+    if (i < n) { sum += values[i]; out.push(i === n - 1 ? sum / n : null); }
+    else out.push(values[i] * k + out[i-1] * (1 - k));
+  }
+  return out;
+}
+function rsi(closes, n = 14) {
+  const out = [];
+  let g = 0, l = 0;
+  for (let i = 0; i < closes.length; i++) {
+    if (i === 0) { out.push(null); continue; }
+    const d = closes[i] - closes[i-1];
+    const up = Math.max(d, 0), dn = Math.max(-d, 0);
+    if (i <= n) {
+      g += up; l += dn;
+      if (i === n) { g /= n; l /= n; out.push(l === 0 ? 100 : 100 - 100 / (1 + g / l)); }
+      else out.push(null);
+    } else {
+      g = (g * (n - 1) + up) / n; l = (l * (n - 1) + dn) / n;
+      out.push(l === 0 ? 100 : 100 - 100 / (1 + g / l));
+    }
+  }
+  return out;
+}
+function atr2(bars, n = 14) {
+  const trs = bars.map((b, i) => i === 0 ? b.h - b.l : Math.max(b.h - b.l, Math.abs(b.h - bars[i-1].c), Math.abs(b.l - bars[i-1].c)));
+  const out = bars.map((_, i) => i < n - 1 ? null : null);
+  let a = 0;
+  for (let i = 0; i < n && i < trs.length; i++) a += trs[i];
+  a /= Math.min(n, trs.length);
+  if (out.length) out[n - 1] = a;
+  for (let i = n; i < bars.length; i++) { a = (a * (n - 1) + trs[i]) / n; out[i] = a; }
+  return out;
+}
+
+async function fetchLive(tf) {
+  const r = await fetch(`https://api.exchange.coinbase.com/products/${LIVE_PAIR}/candles?granularity=${tf.g}`, { cache:'no-store' });
+  if (!r.ok) throw new Error('HTTP ' + r.status);
+  const raw = await r.json(); // [[time, low, high, open, close, volume], ...] récentes d'abord
+  const bars = raw.map(c => ({ t: c[0] * 1000, l: c[1], h: c[2], o: c[3], c: c[4] })).reverse();
+  return bars;
+}
+
+function timeLabel(ts, tf) {
+  const d = new Date(ts);
+  if (tf.g < 3600) return d.toLocaleTimeString('fr-FR', {hour:'2-digit', minute:'2-digit'});
+  if (tf.g < 86400) return d.toLocaleDateString('fr-FR', {day:'2-digit', month:'2-digit'}) + ' ' + d.toLocaleTimeString('fr-FR', {hour:'2-digit', minute:'2-digit'});
+  return d.toLocaleDateString('fr-FR', {day:'2-digit', month:'2-digit'});
+}
+
+function drawLive(bars, e9, e21, tf) {
+  const c = document.getElementById('livechart'), ctx = c.getContext('2d');
+  const W = c.width, H = c.height, pad = 52, bottom = 22;
+  const closes = bars.map(b => b.c);
+  const min = Math.min(...bars.map(b => b.l), ...e9.filter(v => v != null), ...e21.filter(v => v != null));
+  const max = Math.max(...bars.map(b => b.h), ...e9.filter(v => v != null), ...e21.filter(v => v != null));
+  const range = (max - min) || 1;
+  const x = i => pad + (W - pad - 8) * i / (bars.length - 1 || 1);
+  const y = v => 6 + (H - bottom - 6) * (1 - (v - min) / range);
+  ctx.clearRect(0,0,W,H);
+  ctx.font = '11px sans-serif'; ctx.fillStyle = '#8b949e'; ctx.strokeStyle = '#30363d'; ctx.lineWidth = 1;
+  for (let i = 0; i <= 4; i++) {
+    const yy = 6 + (H - bottom - 6) * i / 4;
+    ctx.beginPath(); ctx.moveTo(pad, yy); ctx.lineTo(W - 4, yy); ctx.stroke();
+    ctx.fillText(fmt(max - range * i / 4), 6, yy + 3);
+  }
+  const nbLabels = 6;
+  for (let i = 0; i <= nbLabels; i++) {
+    const idx = Math.floor((bars.length - 1) * i / nbLabels);
+    ctx.fillText(timeLabel(bars[idx].t, tf), Math.min(x(idx), W - 76), H - 6);
+  }
+  const bw = Math.max(2, Math.min(10, (W - pad - 8) / bars.length - 1));
+  bars.forEach((b, i) => {
+    const up = b.c >= b.o;
+    ctx.strokeStyle = ctx.fillStyle = up ? '#3fb950' : '#f85149';
+    ctx.beginPath(); ctx.moveTo(x(i), y(b.h)); ctx.lineTo(x(i), y(b.l)); ctx.stroke();
+    const y1 = y(Math.max(b.o, b.c)), y2 = y(Math.min(b.o, b.c));
+    ctx.fillRect(x(i) - bw/2, y1, bw, Math.max(1.5, y2 - y1));
+  });
+  [[e9, '#f0b429'], [e21, '#58a6ff']].forEach(([line, color]) => {
+    ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.beginPath(); let started = false;
+    line.forEach((v, i) => { if (v == null) return; started ? ctx.lineTo(x(i), y(v)) : (ctx.moveTo(x(i), y(v)), started = true); });
+    ctx.stroke();
+  });
+}
+
+function drawPanel(canvasId, values, opt) {
+  const c = document.getElementById(canvasId), ctx = c.getContext('2d');
+  const W = c.width, H = c.height, pad = 52, bottom = 8;
+  ctx.clearRect(0,0,W,H);
+  ctx.font = '11px sans-serif'; ctx.strokeStyle = '#30363d'; ctx.lineWidth = 1;
+  const lo = opt.min, hi = opt.max, range = (hi - lo) || 1;
+  const x = i => pad + (W - pad - 8) * i / (values.length - 1 || 1);
+  const y = v => 6 + (H - bottom - 6) * (1 - (v - lo) / range);
+  for (let i = 0; i <= 2; i++) {
+    const yy = 6 + (H - bottom - 6) * i / 2;
+    ctx.beginPath(); ctx.moveTo(pad, yy); ctx.lineTo(W - 4, yy); ctx.stroke();
+    ctx.fillStyle = '#8b949e';
+    ctx.fillText(fmt(hi - range * i / 2), 6, yy + 3);
+  }
+  (opt.lines || []).forEach(lv => {
+    ctx.strokeStyle = lv.color; ctx.setLineDash([4,4]); ctx.beginPath(); ctx.moveTo(pad, y(lv.v)); ctx.lineTo(W - 4, y(lv.v)); ctx.stroke(); ctx.setLineDash([]);
+  });
+  ctx.strokeStyle = opt.color; ctx.lineWidth = 2; ctx.beginPath(); let started = false;
+  values.forEach((v, i) => { if (v == null) return; started ? ctx.lineTo(x(i), y(v)) : (ctx.moveTo(x(i), y(v)), started = true); });
+  ctx.stroke();
+}
+
+async function refreshLive() {
+  const tf = TFS[curTF];
+  try {
+    const bars = await fetchLive(tf);
+    if (!bars.length) throw new Error('aucune donnée');
+    const closes = bars.map(b => b.c);
+    const e9 = ema(closes, 9), e21 = ema(closes, 21), r = rsi(closes, 14), a = atr2(bars, 14);
+    const last = bars[bars.length - 1];
+    const first = bars[0];
+    const chg = last.c - first.c, chgPct = first.c ? chg / first.c * 100 : 0;
+    document.getElementById('liveprice').textContent = fmt(last.c) + ' $';
+    document.getElementById('livechg').innerHTML = `<span class="${chg>=0?'gain':'perte'}">${chg>=0?'+':''}${fmt(chg)} $ (${chg>=0?'+':''}${fmt(chgPct,2)} %) sur la période affichée</span>`;
+    // signal = logique du bot appliquée à la dernière bougie
+    const le9 = e9[e9.length-1], le21 = e21[e21.length-1], lr = r[r.length-1];
+    const sig = document.getElementById('livesignal'), det = document.getElementById('livesigdetail');
+    if (le9 == null || lr == null) { sig.textContent = '—'; sig.className = 'badge none'; det.textContent = 'En attente de suffisamment de données'; }
+    else if (le9 > le21 && lr < 70) { sig.textContent = 'ACHAT 🟢'; sig.className = 'badge long'; det.textContent = `EMA9 > EMA21 (tendance haussière) et RSI ${fmt(lr,1)} < 70`; }
+    else if (le9 < le21 && lr > 30) { sig.textContent = 'VENTE 🔴'; sig.className = 'badge short'; det.textContent = `EMA9 < EMA21 (tendance baissière) et RSI ${fmt(lr,1)} > 30`; }
+    else { sig.textContent = 'ATTENTE ⏳'; sig.className = 'badge none'; det.textContent = `EMAs ${le9>le21?'haussières':'baissières'} mais RSI ${fmt(lr,1)} bloque le signal`; }
+    drawLive(bars, e9, e21, tf);
+    drawPanel('rsichart', r, {min:0, max:100, color:'#58a6ff', lines:[{v:70,color:'#f85149'},{v:30,color:'#3fb950'},{v:50,color:'#30363d'}]});
+    const amax = Math.max(...a.filter(v => v != null));
+    drawPanel('atrchart', a, {min:0, max:amax, color:'#f0b429'});
+    document.getElementById('liveupd').textContent = `Cours de l'or · actualisé à ${new Date().toLocaleTimeString('fr-FR')} · rafraîchissement auto 30 s · ${bars.length} bougies ${tf.label}`;
   } catch (e) {
-    renderError(e.message);
+    document.getElementById('liveupd').textContent = 'Erreur de chargement du cours : ' + e.message;
   }
 }
 
-// Section OANDA : si le bot committe un jour un fichier oanda.json (compte réel/démo),
-// le panneau affichera automatiquement les données du compte broker.
-async function checkOanda() {
-  try {
-    const o = await fetchJson('oanda.json');
-    if (o && o.balance != null) {
-      document.getElementById('oanda').innerHTML = `Compte broker (OANDA) : <b>${fmt(o.balance)} ${o.currency||'EUR'}</b>${o.equity!=null? ' · équité '+fmt(o.equity):''}`;
-    }
-  } catch (e) { /* pas encore connecté : normal */ }
+function buildTFButtons() {
+  const row = document.getElementById('tfrow');
+  TFS.forEach((tf, i) => {
+    const b = document.createElement('div');
+    b.className = 'tf' + (i === curTF ? ' active' : '');
+    b.textContent = tf.label;
+    b.onclick = () => { curTF = i; [...row.children].forEach((el, j) => el.classList.toggle('active', j === i)); refreshLive(); };
+    row.appendChild(b);
+  });
 }
 
+// ===== OANDA (futur) =====
+async function checkOanda() {
+  try {
+    const o = await fetchJson(RAW + '/oanda.json');
+    if (o && o.balance != null) document.getElementById('oanda').innerHTML = `Compte broker (OANDA) : <b>${fmt(o.balance)} ${o.currency||'EUR'}</b>${o.equity!=null? ' · équité '+fmt(o.equity):''}`;
+  } catch (e) {}
+}
+
+// ===== DÉMARRAGE =====
+buildTFButtons();
 refresh();
 checkOanda();
 setInterval(refresh, 60000);
+setInterval(() => { if (!document.getElementById('tab-2').classList.contains('hidden')) refreshLive(); }, 30000);
 </script>
 </body>
 </html>
