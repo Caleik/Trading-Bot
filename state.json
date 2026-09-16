@@ -11,8 +11,12 @@
   "open_time": null,
   "open_reason": null,
   "position_id": null,
-  "last_price": 4327.1,
-  "last_cycle": "2026-09-16T06:41:00.716749+02:00",
-  "eurusd": 1.155,
-  "run_count": 1
+  "last_price": 4336.75,
+  "last_cycle": "2026-09-16T09:05:21.528128+02:00",
+  "eurusd": 1.1551,
+  "run_count": 2,
+  "dispatch_day": "2026-09-16",
+  "dispatches_today": 1,
+  "last_report_ms": 1789542321528,
+  "last_check_ms": 1789542120000
 }
