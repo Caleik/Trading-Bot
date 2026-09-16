@@ -355,8 +355,12 @@ def build_event_embed(result, state):
 
 def run_cycle(state, trades):
     """Un check complet : recuperation des bougies, indicateurs, decisions, sauvegarde."""
-    candles = fetch_candles()
-    if len(candles) < 25:
+    try:
+        candles = fetch_candles()
+    except Exception as e:
+        # panne reseau / API : erreur propre, pas de crash (le prochain run retentera)
+        return {"action": "ERROR", "detail": f"Bougies indisponibles : {e}", "equity": state["equity"], "price": None}
+    if not candles or len(candles) < 25:
         return {"action": "ERROR", "detail": "Pas assez de bougies", "equity": state["equity"], "price": None}
     eurusd = fetch_eurusd()
     live_price = fetch_ticker()          # prix temps reel pour entrees et SL/TP
@@ -378,7 +382,7 @@ def run_cycle(state, trades):
     def htf_trend(gran):
         try:
             htf = fetch_candles(gran=gran)
-            if len(htf) < 25:
+            if not htf or len(htf) < 25:
                 return 0
             cl = [x["c"] for x in htf]
             e9, e21 = ema_series(cl, 9), ema_series(cl, 21)
