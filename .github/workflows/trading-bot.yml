@@ -50,7 +50,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           DISPATCHES=$(python3 -c "import json;print(json.load(open('state.json')).get('dispatches_today',0))" 2>/dev/null || echo 0)
-          QUEUED=$(gh api "repos/Caleik/Trading-Bot/actions/workflows/trading-bot.yml/runs?status=queued&per_page=5" --jq 'length' 2>/dev/null || echo 1)
+          QUEUED=$(gh api "repos/Caleik/Trading-Bot/actions/workflows/trading-bot.yml/runs?status=queued&per_page=5" --jq '.total_count' 2>/dev/null || echo 1)
           echo "relances aujourd'hui: $DISPATCHES | runs en file: $QUEUED"
           if [ "$DISPATCHES" -lt 800 ] && [ "$QUEUED" -eq 0 ]; then
             gh api -X POST repos/Caleik/Trading-Bot/actions/workflows/trading-bot.yml/dispatches -f ref=main
