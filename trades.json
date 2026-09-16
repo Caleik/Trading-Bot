@@ -133,5 +133,16 @@
     "close_reason": "TP",
     "closed_at": "2026-09-16T13:08:48.555386+02:00",
     "pnl_eur": 2.72
+  },
+  {
+    "id": "d406af481d6f",
+    "side": "SHORT",
+    "entry_price": 4347.46,
+    "size_oz": 0.84,
+    "sl": 4350.04,
+    "tp": 4343.59,
+    "status": "OPEN",
+    "reason_open": "EMA9 < EMA21 (croisement baissier), RSI 43",
+    "opened_at": "2026-09-16T13:19:39.313064+02:00"
   }
 ]
