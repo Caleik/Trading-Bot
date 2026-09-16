@@ -36,6 +36,7 @@ RISK_PCT = 0.02          # risque par trade : 2% du capital
 TIMEFRAME = "1m"         # bougies 1 minute (scalping)
 SL_ATR = 1.0             # stop loss = 1 x ATR (resserre pour le scalping)
 TP_ATR = 1.5             # take profit = 1.5 x ATR
+MAX_HOLD_MIN = 120       # sortie forcee apres 2 h : du vrai scalping, jamais de position qui traine
 STARTING_EQUITY = 50.0   # capital papier initial en EUR
 PAUSE_THRESHOLD = 5.0    # le bot se met en pause si le capital tombe sous 5 EUR
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0"
@@ -196,12 +197,16 @@ def build_embed(heure, result, state):
         emoji = "✅"
     elif action.startswith("CLOSE_SL"):
         emoji = "🛑"
+    elif action.startswith("CLOSE_TIMEOUT"):
+        emoji = "⌛"
     elif action.startswith("OPEN"):
         emoji = "🎯"
     else:
         emoji = "⏳"
     color = 0x2ECC71 if (action.startswith("CLOSE_TP") or action.startswith("OPEN")) else (
-        0xE74C3C if action.startswith("CLOSE_SL") else 0x9B59B6
+        0xE74C3C if action.startswith("CLOSE_SL") else (
+            0xE67E22 if action.startswith("CLOSE_TIMEOUT") else 0x9B59B6
+        )
     )
     sign = "+" if perf >= 0 else ""
     return {
@@ -224,7 +229,7 @@ def build_embed(heure, result, state):
             {"name": "📌 Position", "value": pos_text, "inline": False},
             {"name": "🔢 Trades", "value": f"{state['trade_count']} trade(s) clôturé(s)", "inline": True},
         ],
-        "footer": {"text": "Bot trading papier — SCALPING XAU/USD 5 min, SL 1xATR / TP 1.5xATR, risque 2% (GitHub Actions)"},
+        "footer": {"text": "Bot trading papier — SCALPING XAU/USD 1 min, SL 1xATR / TP 1.5xATR, sortie max 2 h, risque 2% (GitHub Actions)"},
     }
 
 
@@ -256,6 +261,8 @@ def build_event_embed(result, state):
             title, color = "🎯 TAKE PROFIT ATTEINT — trade clôturé", 0x2ECC71
         elif reason == "SL":
             title, color = "🛑 STOP LOSS TOUCHÉ — trade clôturé", 0xE74C3C
+        elif reason == "TIMEOUT":
+            title, color = "⌛ Durée max atteinte (2 h) — position clôturée", 0xE67E22
         else:
             title, color = "↩️ Signal inversé — position clôturée", 0x9B59B6
         return {
@@ -366,6 +373,15 @@ def run_cycle(state, trades):
                 exit_price, close_reason = state["open_sl"], "SL"
             elif state["open_side"] == "SHORT" and live_price <= state["open_tp"]:
                 exit_price, close_reason = state["open_tp"], "TP"
+        # ---- sortie forcee : position ouverte depuis trop longtemps -> on ferme au prix
+        if exit_price is None:
+            try:
+                opened_ms = datetime.fromisoformat(state["open_time"]).timestamp() * 1000
+            except Exception:
+                opened_ms = 0
+            if opened_ms and time.time() * 1000 - opened_ms > MAX_HOLD_MIN * 60 * 1000:
+                exit_price, close_reason = price, "TIMEOUT"
+
         if exit_price is None and (
             (state["open_side"] == "LONG" and cross_down)
             or (state["open_side"] == "SHORT" and cross_up)
