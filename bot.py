@@ -312,6 +312,7 @@ def run_cycle(state, trades):
     cross_down = cross_down and ema9[i] < ema21[i]
 
     result = {
+        "last_candle_t": last["t"],
         "price": price,
         "rsi": round(rsi, 1),
         "atr": round(atr, 2),
@@ -337,16 +338,33 @@ def run_cycle(state, trades):
         }
 
         exit_price, close_reason = None, None
-        c = candles[-1]  # derniere bougie close (son H/L couvre les breches passees)
-        if state["open_side"] == "LONG":
-            if c["l"] <= state["open_sl"] or (live_price is not None and live_price <= state["open_sl"]):
+        # SL/TP verifies sur TOUTES les bougies depuis l'ouverture de la position ou le
+        # dernier check (remplit retroactivement -> les trous de surveillance ne faussent pas la simu)
+        try:
+            open_ms = datetime.fromisoformat(state["open_time"]).timestamp() * 1000
+        except Exception:
+            open_ms = 0
+        since_ms = max(open_ms, state.get("last_check_ms", 0))
+        missed = [x for x in candles if x["t"] > since_ms] or [candles[-1]]
+        for c in missed:
+            if state["open_side"] == "LONG":
+                if c["l"] <= state["open_sl"]:
+                    exit_price, close_reason = state["open_sl"], "SL"; break
+                if c["h"] >= state["open_tp"]:
+                    exit_price, close_reason = state["open_tp"], "TP"; break
+            else:
+                if c["h"] >= state["open_sl"]:
+                    exit_price, close_reason = state["open_sl"], "SL"; break
+                if c["l"] <= state["open_tp"]:
+                    exit_price, close_reason = state["open_tp"], "TP"; break
+        if exit_price is None and live_price is not None:  # bougie en cours (prix temps reel)
+            if state["open_side"] == "LONG" and live_price <= state["open_sl"]:
                 exit_price, close_reason = state["open_sl"], "SL"
-            elif c["h"] >= state["open_tp"] or (live_price is not None and live_price >= state["open_tp"]):
+            elif state["open_side"] == "LONG" and live_price >= state["open_tp"]:
                 exit_price, close_reason = state["open_tp"], "TP"
-        else:
-            if c["h"] >= state["open_sl"] or (live_price is not None and live_price >= state["open_sl"]):
+            elif state["open_side"] == "SHORT" and live_price >= state["open_sl"]:
                 exit_price, close_reason = state["open_sl"], "SL"
-            elif c["l"] <= state["open_tp"] or (live_price is not None and live_price <= state["open_tp"]):
+            elif state["open_side"] == "SHORT" and live_price <= state["open_tp"]:
                 exit_price, close_reason = state["open_tp"], "TP"
         if exit_price is None and (
             (state["open_side"] == "LONG" and cross_down)
@@ -471,6 +489,11 @@ def main():
 
     # un seul check par run : run court (~30 s) que GitHub ne throttle pas
     state["run_count"] = state.get("run_count", 0) + 1
+    today = datetime.now(ZoneInfo("Europe/Paris")).strftime("%Y-%m-%d")
+    if state.get("dispatch_day") != today:
+        state["dispatch_day"] = today
+        state["dispatches_today"] = 0
+    state["dispatches_today"] = state.get("dispatches_today", 0) + 1
     result = run_cycle(state, trades)
     heure = datetime.now(ZoneInfo("Europe/Paris")).strftime("%H:%M:%S")
     ok, info = False, "non envoyé"
@@ -481,18 +504,23 @@ def main():
         event = build_event_embed(result, state)
         if event:
             ok, info = post_discord(webhook, event)
-        # compte-rendu complet 1 run sur 3 (~toutes les 15 min avec le cron 5 min)
-        if state["run_count"] % 3 == 1:
+        # compte-rendu complet calé sur le TEMPS REEL (>= 12 min depuis le precedent),
+        # independant des runs manques/throttles
+        now_ms = int(time.time() * 1000)
+        if now_ms - state.get("last_report_ms", 0) >= 12 * 60 * 1000:
             ok2, info2 = post_discord(webhook, build_embed(heure, result, state))
+            state["last_report_ms"] = now_ms
             ok, info = ok or ok2, info + " | cycle: " + ("OK" if ok2 else info2)
+            if not ok2:
+                print(f"ECHEC ENVOI DISCORD : {info2}")
+        # memoriser le dernier check (SL/TP retroactif au prochain run)
+        if result.get("last_candle_t"):
+            state["last_check_ms"] = result["last_candle_t"]
         print(json.dumps({"run": state["run_count"], "heure": heure, **{
             k: result.get(k) for k in ("action", "detail", "equity", "price")}}, ensure_ascii=False))
 
     save_json(STATE_FILE, state)
     save_json(TRADES_FILE, trades)
-    if result.get("action") not in ("ERROR",) and state["run_count"] % 3 == 1 and not ok:
-        print(f"ECHEC ENVOI DISCORD : {info}")
-        sys.exit(1)
 
 
 if __name__ == "__main__":
