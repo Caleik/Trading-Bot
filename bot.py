@@ -293,8 +293,23 @@ def run_cycle(state, trades):
     last = candles[i]
     price = live_price if live_price is not None else last["c"]
 
-    cross_up = ema9[i - 1] <= ema21[i - 1] and ema9[i] > ema21[i]
-    cross_down = ema9[i - 1] >= ema21[i - 1] and ema9[i] < ema21[i]
+    # croisement RECENT dans les FLIP_WINDOW dernieres bougies : les runs GitHub
+    # espaces de ~5 min peuvent rater le flip exact -> on cherche le flip recemment survenu
+    FLIP_WINDOW = 8
+    cross_up = cross_down = False
+    flip_t = 0
+    for j in range(max(1, i - FLIP_WINDOW), i + 1):
+        if ema9[j - 1] <= ema21[j - 1] and ema9[j] > ema21[j]:
+            cross_up, flip_t = True, candles[j]["t"]
+            break
+    if not cross_up:
+        for j in range(max(1, i - FLIP_WINDOW), i + 1):
+            if ema9[j - 1] >= ema21[j - 1] and ema9[j] < ema21[j]:
+                cross_down, flip_t = True, candles[j]["t"]
+                break
+    # le sens doit etre toujours valable sur la derniere bougie
+    cross_up = cross_up and ema9[i] > ema21[i]
+    cross_down = cross_down and ema9[i] < ema21[i]
 
     result = {
         "price": price,
@@ -374,11 +389,13 @@ def run_cycle(state, trades):
     # ---- 2) pas de position -> chercher une entrée
     elif state["status"] == "RUNNING":
         now_ms = datetime.now().timestamp() * 1000
-        if now_ms - last["t"] > 5 * 60 * 1000:
+        if now_ms - last["t"] > 15 * 60 * 1000:   # PAXG a des periodes calmes : 15 min de tolerance
             result["detail"] = "Dernière bougie trop ancienne (marché fermé ?)"
         else:
             side, reason = None, ""
-            if cross_up and 45 < rsi < 75:
+            if flip_t and flip_t <= state.get("last_flip_t", 0):
+                side = None  # flip deja joue (anti re-entree)
+            elif cross_up and 45 < rsi < 75:
                 side, reason = "LONG", f"EMA9 > EMA21 (croisement haussier), RSI {round(rsi)}"
             elif cross_down and 25 < rsi < 55:
                 side, reason = "SHORT", f"EMA9 < EMA21 (croisement baissier), RSI {round(rsi)}"
@@ -391,6 +408,7 @@ def run_cycle(state, trades):
                 sl = round(price - d * sl_dist, 2)
                 tp = round(price + d * tp_dist, 2)
                 trade_id = uuid.uuid4().hex[:12]
+                state["last_flip_t"] = flip_t
                 trades.append({
                     "id": trade_id,
                     "side": side,
@@ -451,26 +469,28 @@ def main():
     trades = load_json(TRADES_FILE, [])
     webhook = os.environ.get("DISCORD_WEBHOOK_URL", "")
 
-    for check in range(CHECKS_PER_RUN):
-        result = run_cycle(state, trades)
-        heure = datetime.now(ZoneInfo("Europe/Paris")).strftime("%H:%M:%S")
-        if result.get("action") == "ERROR":
-            print(json.dumps({"check": check + 1, "error": result["detail"]}, ensure_ascii=False))
-        else:
-            # evenement d'ouverture/fermeture -> message Discord IMMEDIAT
-            event = build_event_embed(result, state)
-            if event:
-                post_discord(webhook, event)
-            # compte-rendu de cycle UNIQUEMENT au dernier check du run
-            if check == CHECKS_PER_RUN - 1:
-                ok, info = post_discord(webhook, build_embed(heure, result, state))
-                result["posted"] = ok
-                result["discord_info"] = info
-            print(json.dumps({"check": check + 1, "heure": heure, **{
-                k: result.get(k) for k in ("action", "detail", "equity", "price")}}, ensure_ascii=False))
-        if check < CHECKS_PER_RUN - 1:
-            time.sleep(CHECK_INTERVAL_SEC)
-    if not ok:
+    # un seul check par run : run court (~30 s) que GitHub ne throttle pas
+    state["run_count"] = state.get("run_count", 0) + 1
+    result = run_cycle(state, trades)
+    heure = datetime.now(ZoneInfo("Europe/Paris")).strftime("%H:%M:%S")
+    ok, info = False, "non envoyé"
+    if result.get("action") == "ERROR":
+        print(json.dumps({"run": state["run_count"], "error": result["detail"]}, ensure_ascii=False))
+    else:
+        # evenement d'ouverture/fermeture -> message Discord IMMEDIAT
+        event = build_event_embed(result, state)
+        if event:
+            ok, info = post_discord(webhook, event)
+        # compte-rendu complet 1 run sur 3 (~toutes les 15 min avec le cron 5 min)
+        if state["run_count"] % 3 == 1:
+            ok2, info2 = post_discord(webhook, build_embed(heure, result, state))
+            ok, info = ok or ok2, info + " | cycle: " + ("OK" if ok2 else info2)
+        print(json.dumps({"run": state["run_count"], "heure": heure, **{
+            k: result.get(k) for k in ("action", "detail", "equity", "price")}}, ensure_ascii=False))
+
+    save_json(STATE_FILE, state)
+    save_json(TRADES_FILE, trades)
+    if result.get("action") not in ("ERROR",) and state["run_count"] % 3 == 1 and not ok:
         print(f"ECHEC ENVOI DISCORD : {info}")
         sys.exit(1)
 
