@@ -24,7 +24,7 @@ import os
 import sys
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 import requests
@@ -47,28 +47,61 @@ CONF_MAX_RUN_ATR = 2.5   # si le prix a deja couru > 2.5 x ATR au-dela du creux 
 DROP_MIN_ATR = 1.2       # la chute (resp. hausse) initiale doit faire >= 1.2 x ATR
 # trades 24/7 y compris la nuit, s'ils respectent la confirmation + le biais 1h
 
-# ---- BLACKOUT NEWS : pas de NOUVELLE entree autour des annonces USD a fort impact.
-# Les positions deja ouvertes restent geree normalement (SL/trail/TP inchanges).
-# Format : (debut_utc_iso, fin_utc_iso, label). A mettre a jour a chaque calendrier econo.
-NEWS_BLACKOUTS = [
-    ("2026-09-16T12:15:00+00:00", "2026-09-16T13:00:00+00:00", "US Retail Sales (14h30 Paris)"),
-    ("2026-09-16T17:45:00+00:00", "2026-09-16T19:30:00+00:00", "Fed Rate Decision + Press Conference (20h00/20h30 Paris)"),
-    ("2026-09-17T10:45:00+00:00", "2026-09-17T11:30:00+00:00", "BoE Interest Rate Decision (13h00 Paris)"),
-    ("2026-09-17T12:15:00+00:00", "2026-09-17T13:00:00+00:00", "US Housing Starts / Building Permits (14h30 Paris)"),
-]
+# ---- BLACKOUT NEWS AUTO : le bot telecharge le calendrier economique (ForexFactory,
+# flux JSON public sans cle) et bloque toute NOUVELLE entree autour des annonces a
+# fort impact USD / GBP / EUR. Les positions ouvertes restent gerees normalement.
+NEWS_FEED_URL = "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
+NEWS_CURRENCIES = ("USD", "GBP", "EUR")
+NEWS_IMPACT = ("High",)
+NEWS_MIN_BEFORE = 30      # pas d'entree a partir de 30 min avant l'annonce
+NEWS_MIN_AFTER = 60       # ... jusqu'a 60 min apres (volatilite post-annonce)
+NEWS_CACHE_TTL_MS = 60 * 60 * 1000   # calendrier rafraichi toutes les heures (cache dans state)
 
 
-def active_news_blackout():
-    """Retourne le label de l'annonce en cours si on est dans une fenetre de blackout, sinon None."""
-    now = datetime.now(timezone.utc)
-    for start_s, end_s, label in NEWS_BLACKOUTS:
+def fetch_news_events():
+    """Telecharge le calendrier ForexFactory -> fenetres de blackout [(debut, fin, label)] en UTC."""
+    r = requests.get(NEWS_FEED_URL, timeout=15, headers={"User-Agent": UA})
+    r.raise_for_status()
+    events = []
+    for e in r.json():
         try:
-            start, end = datetime.fromisoformat(start_s), datetime.fromisoformat(end_s)
+            if e.get("impact") not in NEWS_IMPACT or e.get("country") not in NEWS_CURRENCIES:
+                continue
+            # les dates du flux sont en heure de New York, sans fuseau explicite
+            when = datetime.fromisoformat(e["date"]).replace(tzinfo=ZoneInfo("America/New_York"))
+            utc = when.astimezone(timezone.utc)
+            paris_h = when.astimezone(ZoneInfo("Europe/Paris")).strftime("%Hh%M")
+            events.append([
+                (utc - timedelta(minutes=NEWS_MIN_BEFORE)).isoformat(),
+                (utc + timedelta(minutes=NEWS_MIN_AFTER)).isoformat(),
+                f"{e['country']} — {e.get('title', 'annonce')} ({paris_h} Paris)",
+            ])
         except Exception:
             continue
-        if start <= now <= end:
-            return label
+    return events
+
+
+def active_news_blackout(state):
+    """Label de l'annonce en blackout en cours, sinon None. Calendrier mis en cache dans state."""
+    cache = state.get("news_cache") or {}
+    now_ms = int(time.time() * 1000)
+    if now_ms - cache.get("fetched_ms", 0) > NEWS_CACHE_TTL_MS:
+        try:
+            events = fetch_news_events()
+        except Exception:
+            events = cache.get("events", [])   # flux indisponible -> on garde l'ancien calendrier
+        cache = {"fetched_ms": now_ms, "events": events}
+        state["news_cache"] = cache
+    now = datetime.now(timezone.utc)
+    for start_s, end_s, label in cache.get("events", []):
+        try:
+            if datetime.fromisoformat(start_s) <= now <= datetime.fromisoformat(end_s):
+                return label
+        except Exception:
+            continue
     return None
+
+
 STARTING_EQUITY = 50.0   # capital papier initial en EUR
 PAUSE_THRESHOLD = 5.0    # le bot se met en pause si le capital tombe sous 5 EUR
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0"
@@ -405,6 +438,9 @@ def run_cycle(state, trades):
                         return "SHORT", cont["t"], hi2
         return None, 0, 0.0
     conf_side, conf_t, conf_swing = detect_confirmation(candles)
+    # calendrier eco auto (cache 1 h dans state) : label si une annonce bloque les entrees
+    news_label = active_news_blackout(state)
+    state["news_blackout_label"] = news_label
 
     result = {
         "last_candle_t": last["t"],
@@ -525,7 +561,6 @@ def run_cycle(state, trades):
     # ---- 2) pas de position -> chercher une entree (confirmation requise, 24/7)
     elif state["status"] == "RUNNING":
         now_ms = datetime.now().timestamp() * 1000
-        news_label = active_news_blackout()
         if now_ms - last["t"] > 15 * 60 * 1000:   # PAXG a des periodes calmes : 15 min de tolerance
             result["detail"] = "Dernière bougie trop ancienne (marché fermé ?)"
         elif news_label:
@@ -621,6 +656,7 @@ def main():
         }
     trades = load_json(TRADES_FILE, [])
     webhook = os.environ.get("DISCORD_WEBHOOK_URL", "")
+    prev_blackout = state.get("news_blackout_label")
 
     # un seul check par run : run court (~30 s) que GitHub ne throttle pas
     state["run_count"] = state.get("run_count", 0) + 1
@@ -631,6 +667,24 @@ def main():
     state["dispatches_today"] = state.get("dispatches_today", 0) + 1
     result = run_cycle(state, trades)
     heure = datetime.now(ZoneInfo("Europe/Paris")).strftime("%H:%M:%S")
+    # transition de blackout news -> message Discord dedie (debut ou fin de fenetre d'annonce)
+    cur_blackout = state.get("news_blackout_label")
+    if cur_blackout != prev_blackout and result.get("action") != "ERROR":
+        if cur_blackout:
+            post_discord(webhook, {
+                "title": "🔕 Blackout news — entrées suspendues",
+                "description": f"**{cur_blackout}**\nAucune nouvelle entrée jusqu'à la fin de la fenêtre. "
+                               "Les positions ouvertes restent protégées (SL / trailing / TP actifs).",
+                "color": 0xE67E22,
+                "footer": {"text": "Calendrier éco auto — ForexFactory"},
+            }, username="Bot Or 📰")
+        else:
+            post_discord(webhook, {
+                "title": "🔔 Fin du blackout news — entrées réactivées",
+                "description": "Fenêtre d'annonce terminée — le bot reprend les entrées confirmées.",
+                "color": 0x2ECC71,
+                "footer": {"text": "Calendrier éco auto — ForexFactory"},
+            }, username="Bot Or 📰")
     ok, info = False, "non envoyé"
     if result.get("action") == "ERROR":
         print(json.dumps({"run": state["run_count"], "error": result["detail"]}, ensure_ascii=False))
