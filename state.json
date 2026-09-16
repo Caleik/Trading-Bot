@@ -11,7 +11,8 @@
   "open_time": null,
   "open_reason": null,
   "position_id": null,
-  "last_price": 4289.56,
-  "last_cycle": "2026-09-16T03:35:18.332672+02:00",
-  "eurusd": 1.1535
+  "last_price": 4327.1,
+  "last_cycle": "2026-09-16T06:41:00.716749+02:00",
+  "eurusd": 1.155,
+  "run_count": 1
 }
