@@ -11,13 +11,13 @@
   "open_time": "2026-09-16T10:24:51.695165+02:00",
   "open_reason": "EMA9 > EMA21 (croisement haussier), RSI 70",
   "position_id": null,
-  "last_price": 4332.76,
-  "last_cycle": "2026-09-16T10:31:11.902247+02:00",
+  "last_price": 4331.8,
+  "last_cycle": "2026-09-16T10:32:26.427761+02:00",
   "eurusd": 1.1549,
-  "run_count": 115,
+  "run_count": 116,
   "dispatch_day": "2026-09-16",
-  "dispatches_today": 114,
-  "last_report_ms": 1789546792687,
+  "dispatches_today": 115,
+  "last_report_ms": 1789547546428,
   "last_check_ms": 1789547280000,
   "last_flip_t": 1789546680000
 }
