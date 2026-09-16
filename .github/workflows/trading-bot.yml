@@ -2,15 +2,15 @@ name: Bot Trading Or XAUUSD
 
 on:
   schedule:
-    # Declencheur toutes les 5 min (decale de 2 min pour eviter les pics de charge
-    # de GitHub). Chaque run surveille ~13 min (13 checks de 60 s) : grace au groupe
-    # de concurrence, les runs s'enchainent => surveillance quasi continue 24/7,
-    # avec un seul compte-rendu Discord par run (~toutes les 13-15 min).
-    - cron: "3,8,13,18,23,28,33,38,43,48,53,58 * * * *"
+    # SECOURS uniquement : le cron GitHub throttle les workflows frequents (observed :
+    # 0 a 2 declenchements/heures). La surveillance continue vient de l'auto-relance
+    # en fin de run (chaine) + le watchdog Base44 qui rebranche si la chaine casse.
+    - cron: "13,43 * * * *"
   workflow_dispatch: {}
 
 permissions:
   contents: write
+  actions: write
 
 concurrency:
   group: trading-bot
@@ -19,7 +19,7 @@ concurrency:
 jobs:
   run-bot:
     runs-on: ubuntu-latest
-    timeout-minutes: 5   # 13 checks de 60 s (~13,5 min) + marge
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -43,4 +43,18 @@ jobs:
             git commit -m "cycle $(date -u '+%Y-%m-%d %H:%M UTC')"
             git pull --rebase --autostash origin main
             git push
+          fi
+      - name: Relancer le prochain cycle (chaine continue ~60-90 s)
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          DISPATCHES=$(python3 -c "import json;print(json.load(open('state.json')).get('dispatches_today',0))" 2>/dev/null || echo 0)
+          QUEUED=$(gh api "repos/Caleik/Trading-Bot/actions/workflows/trading-bot.yml/runs?status=queued&per_page=5" --jq 'length' 2>/dev/null || echo 1)
+          echo "relances aujourd'hui: $DISPATCHES | runs en file: $QUEUED"
+          if [ "$DISPATCHES" -lt 800 ] && [ "$QUEUED" -eq 0 ]; then
+            gh api -X POST repos/Caleik/Trading-Bot/actions/workflows/trading-bot.yml/dispatches -f ref=main
+            echo "prochain cycle relance"
+          else
+            echo "relance ignoree (cap journalier atteint ou run deja en file)"
           fi
