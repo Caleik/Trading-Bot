@@ -11,16 +11,67 @@
   "open_time": "2026-09-16T14:13:24.270315+02:00",
   "open_reason": "Confirmation haussière : chute puis 2 clôtures 5m haussières, biais 1h ↑",
   "position_id": "9f9418cd3461",
-  "last_price": 4337.36,
-  "last_cycle": "2026-09-16T14:24:44.127252+02:00",
-  "eurusd": 1.1535,
-  "run_count": 300,
+  "last_price": 4341.19,
+  "last_cycle": "2026-09-16T14:25:58.492043+02:00",
+  "eurusd": 1.1537,
+  "run_count": 301,
   "dispatch_day": "2026-09-16",
-  "dispatches_today": 299,
+  "dispatches_today": 300,
   "last_report_ms": 1789561185908,
   "last_check_ms": 1789561200000,
   "last_flip_t": 1789560300000,
   "open_sl_init": 4337.02,
   "trail_peak": 4348.69,
-  "trail_trough": null
+  "trail_trough": null,
+  "news_cache": {
+    "fetched_ms": 1789561558348,
+    "events": [
+      [
+        "2026-09-15T05:30:00+00:00",
+        "2026-09-15T07:00:00+00:00",
+        "GBP — Claimant Count Change (08h00 Paris)"
+      ],
+      [
+        "2026-09-16T05:30:00+00:00",
+        "2026-09-16T07:00:00+00:00",
+        "GBP — CPI y/y (08h00 Paris)"
+      ],
+      [
+        "2026-09-16T17:30:00+00:00",
+        "2026-09-16T19:00:00+00:00",
+        "USD — Federal Funds Rate (20h00 Paris)"
+      ],
+      [
+        "2026-09-16T17:30:00+00:00",
+        "2026-09-16T19:00:00+00:00",
+        "USD — FOMC Economic Projections (20h00 Paris)"
+      ],
+      [
+        "2026-09-16T17:30:00+00:00",
+        "2026-09-16T19:00:00+00:00",
+        "USD — FOMC Statement (20h00 Paris)"
+      ],
+      [
+        "2026-09-16T18:00:00+00:00",
+        "2026-09-16T19:30:00+00:00",
+        "USD — FOMC Press Conference (20h30 Paris)"
+      ],
+      [
+        "2026-09-17T10:30:00+00:00",
+        "2026-09-17T12:00:00+00:00",
+        "GBP — Monetary Policy Summary (13h00 Paris)"
+      ],
+      [
+        "2026-09-17T10:30:00+00:00",
+        "2026-09-17T12:00:00+00:00",
+        "GBP — MPC Official Bank Rate Votes (13h00 Paris)"
+      ],
+      [
+        "2026-09-17T10:30:00+00:00",
+        "2026-09-17T12:00:00+00:00",
+        "GBP — Official Bank Rate (13h00 Paris)"
+      ]
+    ]
+  },
+  "news_blackout_label": null
 }
