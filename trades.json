@@ -163,5 +163,16 @@
     "close_reason": "SL",
     "closed_at": "2026-09-16T13:38:23.026102+02:00",
     "pnl_eur": -1.84
+  },
+  {
+    "id": "b265c33285bb",
+    "side": "LONG",
+    "entry_price": 4349.06,
+    "size_oz": 0.67,
+    "sl": 4345.96,
+    "tp": 4353.71,
+    "status": "OPEN",
+    "reason_open": "Croisement haussier 1m, aligné 5m ↑ / 1h ↑, RSI 60",
+    "opened_at": "2026-09-16T13:43:22.161145+02:00"
   }
 ]
