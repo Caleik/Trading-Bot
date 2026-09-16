@@ -32,11 +32,20 @@ import requests
 STATE_FILE = "state.json"
 TRADES_FILE = "trades.json"
 RISK_PCT = 0.02          # risque par trade : 2% du capital
-# ---- MODE SCALPING : bougies 1 minute, signaux tres frequents ----
-TIMEFRAME = "1m"         # bougies 1 minute (scalping)
-SL_ATR = 1.0             # stop loss = 1 x ATR (resserre pour le scalping)
-TP_ATR = 1.5             # take profit = 1.5 x ATR
-MAX_HOLD_MIN = 120       # sortie forcee apres 2 h : du vrai scalping, jamais de position qui traine
+# ---- STRATEGIE CONFIRMATION + RATIO 1:2,5 (vision d'Enzo) ----
+# On n'anticipe plus le retournement : apres une chute (resp. hausse), on attend
+# la 1re bougie 5m qui CLOTURE dans le sens inverse, puis une 2e bougie qui confirme.
+# Entree seulement apres cette double confirmation, dans le sens du biais 1h — 24/7.
+# Gestion : risque 2% par trade, objectif fixe a 2,5 x le risque (1 pour 2,5),
+# breakeven a +1R, puis trailing 2xATR qui ne recule jamais.
+TIMEFRAME = "5m"         # bougies 5 minutes (base de la confirmation)
+TRAIL_ATR = 2.0          # apres +1R : le stop suit a 2 x ATR(5m) derriere l'extremum
+BE_R_MULT = 1.0          # breakeven des que le prix fait +1 x le risque (trade "couvert")
+TP_R_MULT = 2.5          # objectif = 2,5 x le risque : trades "1 pour 2,5" (vision d'Enzo)
+SL_BUFFER_ATR = 0.3      # SL initial = creux (ou sommet) du retournement +/- 0.3 x ATR
+CONF_MAX_RUN_ATR = 2.5   # si le prix a deja couru > 2.5 x ATR au-dela du creux -> on ne chase pas
+DROP_MIN_ATR = 1.2       # la chute (resp. hausse) initiale doit faire >= 1.2 x ATR
+# trades 24/7 y compris la nuit, s'ils respectent la confirmation + le biais 1h
 STARTING_EQUITY = 50.0   # capital papier initial en EUR
 PAUSE_THRESHOLD = 5.0    # le bot se met en pause si le capital tombe sous 5 EUR
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0"
@@ -199,15 +208,15 @@ def build_embed(heure, result, state):
         emoji = "✅"
     elif action.startswith("CLOSE_SL"):
         emoji = "🛑"
-    elif action.startswith("CLOSE_TIMEOUT"):
-        emoji = "⌛"
+    elif action.startswith("CLOSE_TRAIL"):
+        emoji = "🔒"
     elif action.startswith("OPEN"):
         emoji = "🎯"
     else:
         emoji = "⏳"
     color = 0x2ECC71 if (action.startswith("CLOSE_TP") or action.startswith("OPEN")) else (
         0xE74C3C if action.startswith("CLOSE_SL") else (
-            0xE67E22 if action.startswith("CLOSE_TIMEOUT") else 0x9B59B6
+            0x3498DB if action.startswith("CLOSE_TRAIL") else 0x9B59B6
         )
     )
     sign = "+" if perf >= 0 else ""
@@ -237,7 +246,7 @@ def build_embed(heure, result, state):
             {"name": "📌 Position", "value": pos_text, "inline": False},
             {"name": "🔢 Trades", "value": f"{state['trade_count']} trade(s) clôturé(s)", "inline": True},
         ],
-        "footer": {"text": "Bot trading papier — SCALPING XAU/USD 1m aligné 5m/1h, SL 1xATR / TP 1.5xATR, sortie max 2 h, risque 2% (GitHub Actions)"},
+        "footer": {"text": "Bot trading papier — CONFIRMATION 5m (2 clôtures) + biais 1h · risque 2% → objectif 2,5R · breakeven à +1R puis trailing 2xATR · 24/7"},
     }
 
 
@@ -257,7 +266,7 @@ def build_event_embed(result, state):
                 {"name": "Taille", "value": f"{pos.get('size', 0)} oz", "inline": True},
                 {"name": "Risque", "value": f"{round(RISK_PCT * 100)} % du capital", "inline": True},
                 {"name": "🛑 Stop Loss", "value": f"{pos.get('sl')} $", "inline": True},
-                {"name": "🎯 Take Profit", "value": f"{pos.get('tp')} $", "inline": True},
+                {"name": "🎯 Objectif (2,5R)", "value": f"{pos.get('tp')} $", "inline": True},
                 {"name": "Signal", "value": state.get("open_reason") or "—", "inline": False},
             ],
             "footer": {"text": f"Ouvert à {heure} — suivi sur le panneau GitHub Pages"},
@@ -269,10 +278,10 @@ def build_event_embed(result, state):
             title, color = "🎯 TAKE PROFIT ATTEINT — trade clôturé", 0x2ECC71
         elif reason == "SL":
             title, color = "🛑 STOP LOSS TOUCHÉ — trade clôturé", 0xE74C3C
-        elif reason == "TIMEOUT":
-            title, color = "⌛ Durée max atteinte (2 h) — position clôturée", 0xE67E22
+        elif reason == "TRAIL":
+            title, color = "🔒 Sortie trailing (stop protégé) — position clôturée", 0x3498DB
         else:
-            title, color = "↩️ Signal inversé — position clôturée", 0x9B59B6
+            title, color = "↩️ Position clôturée", 0x9B59B6
         return {
             "title": title,
             "color": color,
@@ -309,7 +318,7 @@ def run_cycle(state, trades):
     price = live_price if live_price is not None else last["c"]
 
     # ---- tendances superieures (multi-fuseaux 1h + 5m) :
-    # un croisement 1m n'ouvre une position QUE s'il est aligne avec la tendance 5m ET 1h.
+    # le biais 1h (EMA9/21) filtre les confirmations contre-tendance ; la 5m sert d'info.
     def htf_trend(gran):
         try:
             htf = fetch_candles(gran=gran)
@@ -323,23 +332,56 @@ def run_cycle(state, trades):
     trend_5m = htf_trend(300)
     trend_1h = htf_trend(3600)
 
-    # croisement RECENT dans les FLIP_WINDOW dernieres bougies : les runs GitHub
-    # espaces de ~5 min peuvent rater le flip exact -> on cherche le flip recemment survenu
-    FLIP_WINDOW = 8
-    cross_up = cross_down = False
-    flip_t = 0
-    for j in range(max(1, i - FLIP_WINDOW), i + 1):
-        if ema9[j - 1] <= ema21[j - 1] and ema9[j] > ema21[j]:
-            cross_up, flip_t = True, candles[j]["t"]
-            break
-    if not cross_up:
-        for j in range(max(1, i - FLIP_WINDOW), i + 1):
-            if ema9[j - 1] >= ema21[j - 1] and ema9[j] < ema21[j]:
-                cross_down, flip_t = True, candles[j]["t"]
-                break
-    # le sens doit etre toujours valable sur la derniere bougie
-    cross_up = cross_up and ema9[i] > ema21[i]
-    cross_down = cross_down and ema9[i] < ema21[i]
+    # ---- detection de confirmation : le retournement doit etre PROUVE par
+    # deux clôtures consecutives dans le nouveau sens avant d'entrer (vision d'Enzo)
+    def detect_confirmation(cs):
+        """(side, setup_t, swing) ou (None, 0, 0.0).
+        LONG : chute >= 1.2xATR, puis 1re clôture haussiere, puis 2e qui confirme.
+        SHORT : hausse >= 1.2xATR, puis 1re clôture baissiere, puis 2e qui confirme."""
+        if len(cs) < 14:
+            return None, 0, 0.0
+        win = cs[-12:]
+        price_now = price
+        # ---------- setup LONG : sommet puis creux ----------
+        hi_i = max(range(len(win)), key=lambda k: win[k]["h"])
+        after_hi = win[hi_i + 1:]
+        if len(after_hi) >= 2:
+            lo_i = hi_i + 1 + min(range(len(after_hi)), key=lambda k: after_hi[k]["l"])
+            hi, lo = win[hi_i]["h"], win[lo_i]["l"]
+            if hi - lo >= DROP_MIN_ATR * atr:                      # vraie chute
+                rest = win[lo_i:]        # la bougie du creux peut elle-meme etre la 1re confirmation
+                if len(rest) >= 2:
+                    first, cont = rest[-2], rest[-1]                # 1re conf + continuation (derniere close)
+                    first_is_swing = rest[0] is first
+                    if (
+                        first["c"] > first["o"]                                 # clôture haussiere
+                        and (first_is_swing or first["c"] > win[lo_i]["c"])      # redemarre au-dessus du creux
+                        and cont["c"] > cont["o"] and cont["c"] >= first["c"]   # ca continue
+                        and cont["l"] >= first["l"]                             # creux plus haut
+                        and price_now - lo <= CONF_MAX_RUN_ATR * atr              # pas de chasse au prix
+                    ):
+                        return "LONG", cont["t"], lo
+        # ---------- setup SHORT : creux puis sommet ----------
+        lo2_i = min(range(len(win)), key=lambda k: win[k]["l"])
+        after_lo = win[lo2_i + 1:]
+        if len(after_lo) >= 2:
+            hi2_i = lo2_i + 1 + max(range(len(after_lo)), key=lambda k: after_lo[k]["h"])
+            lo2, hi2 = win[lo2_i]["l"], win[hi2_i]["h"]
+            if hi2 - lo2 >= DROP_MIN_ATR * atr:                     # vraie hausse
+                rest = win[hi2_i:]         # la bougie du sommet peut etre la 1re confirmation
+                if len(rest) >= 2:
+                    first, cont = rest[-2], rest[-1]
+                    first_is_swing = rest[0] is first
+                    if (
+                        first["c"] < first["o"]                                  # clôture baissiere
+                        and (first_is_swing or first["c"] < win[hi2_i]["c"])     # casse sous le sommet
+                        and cont["c"] < cont["o"] and cont["c"] <= first["c"]   # ca continue
+                        and cont["h"] <= first["h"]                             # sommet plus bas
+                        and hi2 - price_now <= CONF_MAX_RUN_ATR * atr           # pas de chasse au prix
+                    ):
+                        return "SHORT", cont["t"], hi2
+        return None, 0, 0.0
+    conf_side, conf_t, conf_swing = detect_confirmation(candles)
 
     result = {
         "last_candle_t": last["t"],
@@ -370,48 +412,59 @@ def run_cycle(state, trades):
         }
 
         exit_price, close_reason = None, None
-        # SL/TP verifies sur TOUTES les bougies depuis l'ouverture de la position ou le
-        # dernier check (remplit retroactivement -> les trous de surveillance ne faussent pas la simu)
+        is_long = state["open_side"] == "LONG"
+        # ---- TRAILING STOP 2xATR : suit le prix, ne recule jamais.
+        # Verifie sur TOUTES les bougies depuis le dernier check (remplissage retroactif).
         try:
             open_ms = datetime.fromisoformat(state["open_time"]).timestamp() * 1000
         except Exception:
             open_ms = 0
         since_ms = max(open_ms, state.get("last_check_ms", 0))
         missed = [x for x in candles if x["t"] > since_ms] or [candles[-1]]
-        for c in missed:
-            if state["open_side"] == "LONG":
-                if c["l"] <= state["open_sl"]:
-                    exit_price, close_reason = state["open_sl"], "SL"; break
-                if c["h"] >= state["open_tp"]:
+        r_unit = abs(state["open_entry"] - (state.get("open_sl_init") or state["open_sl"]))
+        if is_long:
+            peak = max(state.get("trail_peak") or state["open_entry"], state["open_entry"])
+            for cd in missed:
+                # convention bougie : 1) SL (prix du debut de bougie), 2) TP, 3) le trail
+                # ne se serre qu'APRES la bougie favorable -> pas d'optimisme intrabare
+                if cd["l"] <= state["open_sl"]:
+                    exit_price, close_reason = state["open_sl"], "TRAIL"; break
+                if cd["h"] >= state["open_tp"]:
                     exit_price, close_reason = state["open_tp"], "TP"; break
-            else:
-                if c["h"] >= state["open_sl"]:
-                    exit_price, close_reason = state["open_sl"], "SL"; break
-                if c["l"] <= state["open_tp"]:
+                peak = max(peak, cd["h"])                      # le trail suit les plus hauts
+                state["trail_peak"] = peak
+                # breakeven puis trailing, seulement apres +1R en faveur
+                if r_unit > 0 and peak >= state["open_entry"] + BE_R_MULT * r_unit:
+                    cand = max(state["open_entry"], peak - TRAIL_ATR * atr)
+                    state["open_sl"] = max(state["open_sl"], round(cand, 2))
+            if exit_price is None and live_price is not None:
+                if live_price <= state["open_sl"]:
+                    exit_price, close_reason = state["open_sl"], "TRAIL"
+                elif live_price >= state["open_tp"]:
+                    exit_price, close_reason = state["open_tp"], "TP"
+        else:
+            trough = min(state.get("trail_trough") or state["open_entry"], state["open_entry"])
+            for cd in missed:
+                if cd["h"] >= state["open_sl"]:
+                    exit_price, close_reason = state["open_sl"], "TRAIL"; break
+                if cd["l"] <= state["open_tp"]:
                     exit_price, close_reason = state["open_tp"], "TP"; break
-        if exit_price is None and live_price is not None:  # bougie en cours (prix temps reel)
-            if state["open_side"] == "LONG" and live_price <= state["open_sl"]:
-                exit_price, close_reason = state["open_sl"], "SL"
-            elif state["open_side"] == "LONG" and live_price >= state["open_tp"]:
-                exit_price, close_reason = state["open_tp"], "TP"
-            elif state["open_side"] == "SHORT" and live_price >= state["open_sl"]:
-                exit_price, close_reason = state["open_sl"], "SL"
-            elif state["open_side"] == "SHORT" and live_price <= state["open_tp"]:
-                exit_price, close_reason = state["open_tp"], "TP"
-        # ---- sortie forcee : position ouverte depuis trop longtemps -> on ferme au prix
-        if exit_price is None:
-            try:
-                opened_ms = datetime.fromisoformat(state["open_time"]).timestamp() * 1000
-            except Exception:
-                opened_ms = 0
-            if opened_ms and time.time() * 1000 - opened_ms > MAX_HOLD_MIN * 60 * 1000:
-                exit_price, close_reason = price, "TIMEOUT"
-
-        if exit_price is None and (
-            (state["open_side"] == "LONG" and cross_down)
-            or (state["open_side"] == "SHORT" and cross_up)
-        ):
-            exit_price, close_reason = price, "SIGNAL_INVERSE"
+                trough = min(trough, cd["l"])                  # le trail suit les plus bas
+                state["trail_trough"] = trough
+                if r_unit > 0 and trough <= state["open_entry"] - BE_R_MULT * r_unit:
+                    cand = min(state["open_entry"], trough + TRAIL_ATR * atr)
+                    state["open_sl"] = min(state["open_sl"], round(cand, 2))
+            if exit_price is None and live_price is not None:
+                if live_price >= state["open_sl"]:
+                    exit_price, close_reason = state["open_sl"], "TRAIL"
+                elif live_price <= state["open_tp"]:
+                    exit_price, close_reason = state["open_tp"], "TP"
+        # libelle honnete : SL initial jamais deplace = "SL", trail serre = "TRAIL"
+        if close_reason == "TRAIL":
+            if is_long and state["open_sl"] <= (state.get("open_sl_init") or state["open_sl"]):
+                close_reason = "SL"
+            elif not is_long and state["open_sl"] >= (state.get("open_sl_init") or state["open_sl"]):
+                close_reason = "SL"
 
         if exit_price is not None:
             pnl_usd = (exit_price - state["open_entry"]) * d * state["open_size"]
@@ -432,6 +485,7 @@ def run_cycle(state, trades):
                 "trade_count": state["trade_count"] + 1,
                 "open_side": "", "open_entry": None, "open_size": None,
                 "open_sl": None, "open_tp": None, "position_id": None,
+                "open_sl_init": None, "trail_peak": None, "trail_trough": None,
                 "status": "RUNNING" if new_equity > PAUSE_THRESHOLD else "PAUSED",
             })
             result.update({
@@ -445,62 +499,72 @@ def run_cycle(state, trades):
             result["action"] = "HOLD"
             result["detail"] = "Position ouverte maintenue"
 
-    # ---- 2) pas de position -> chercher une entrée
+    # ---- 2) pas de position -> chercher une entree (confirmation requise, 24/7)
     elif state["status"] == "RUNNING":
         now_ms = datetime.now().timestamp() * 1000
         if now_ms - last["t"] > 15 * 60 * 1000:   # PAXG a des periodes calmes : 15 min de tolerance
             result["detail"] = "Dernière bougie trop ancienne (marché fermé ?)"
         else:
-            side, reason = None, ""
-            if flip_t and flip_t <= state.get("last_flip_t", 0):
-                side = None  # flip deja joue (anti re-entree)
-            elif cross_up and 45 < rsi < 75 and trend_1h >= 0 and trend_5m >= 0:
-                side, reason = "LONG", f"Croisement haussier 1m, aligné 5m {'↑' if trend_5m > 0 else '~'} / 1h {'↑' if trend_1h > 0 else '~'}, RSI {round(rsi)}"
-            elif cross_down and 25 < rsi < 55 and trend_1h <= 0 and trend_5m <= 0:
-                side, reason = "SHORT", f"Croisement baissier 1m, aligné 5m {'↓' if trend_5m < 0 else '~'} / 1h {'↓' if trend_1h < 0 else '~'}, RSI {round(rsi)}"
+            side, reason, swing = None, "", 0.0
+            if conf_t and conf_t <= state.get("last_flip_t", 0):
+                side = None                       # setup deja joue (anti re-entree)
+            elif conf_side == "LONG" and trend_1h >= 0:
+                side, reason, swing = "LONG", (
+                    f"Confirmation haussière : chute puis 2 clôtures 5m haussières, "
+                    f"biais 1h {'↑' if trend_1h > 0 else '~'}"
+                ), conf_swing
+            elif conf_side == "SHORT" and trend_1h <= 0:
+                side, reason, swing = "SHORT", (
+                    f"Confirmation baissière : hausse puis 2 clôtures 5m baissières, "
+                    f"biais 1h {'↓' if trend_1h < 0 else '~'}"
+                ), conf_swing
+            elif conf_side:
+                result["detail"] = (
+                    f"Confirmation {'haussière' if conf_side == 'LONG' else 'baissière'} "
+                    "contre le biais 1h — filtrée"
+                )
 
             if side:
                 d = 1 if side == "LONG" else -1
-                sl_dist, tp_dist = SL_ATR * atr, TP_ATR * atr
-                risk_eur = state["equity"] * RISK_PCT
-                size_oz = max(0.01, (risk_eur * eurusd / sl_dist) // 0.01 / 100)
-                sl = round(price - d * sl_dist, 2)
-                tp = round(price + d * tp_dist, 2)
-                trade_id = uuid.uuid4().hex[:12]
-                state["last_flip_t"] = flip_t
-                trades.append({
-                    "id": trade_id,
-                    "side": side,
-                    "entry_price": round(price, 2),
-                    "size_oz": size_oz,
-                    "sl": sl,
-                    "tp": tp,
-                    "status": "OPEN",
-                    "reason_open": reason,
-                    "opened_at": datetime.now(ZoneInfo("Europe/Paris")).isoformat(),
-                })
-                state.update({
-                    "open_side": side, "open_entry": price, "open_size": size_oz,
-                    "open_sl": sl, "open_tp": tp, "open_reason": reason,
-                    "position_id": trade_id,
-                    "open_time": datetime.now(ZoneInfo("Europe/Paris")).isoformat(),
-                })
-                result.update({
-                    "action": "OPEN_" + side,
-                    "detail": f"Trade ouvert : {side} {size_oz} oz @ {round(price,2)} | "
-                              f"SL {sl} / TP {tp} | {reason}",
-                    "position": {"side": side, "entry": price, "size": size_oz,
-                                 "sl": sl, "tp": tp, "floating_eur": 0.0},
-                })
-            else:
-                if side is None and flip_t and flip_t <= state.get("last_flip_t", 0):
-                    result["detail"] = "Flip déjà joué (anti re-entrée)"
-                elif not (cross_up or cross_down):
-                    result["detail"] = "Aucun croisement, en surveillance"
-                elif not ((cross_up and 45 < rsi < 75) or (cross_down and 25 < rsi < 55)):
-                    result["detail"] = "Croisement mais RSI non confirmé"
+                # SL structurel : sous le creux (LONG) / au-dessus du sommet (SHORT), + buffer
+                sl = round(swing - d * SL_BUFFER_ATR * atr, 2)
+                sl_dist = (price - sl) * d
+                if sl_dist <= 0:
+                    result["detail"] = "Structure du setup invalide (SL du mauvais côté) — ignorée"
                 else:
-                    result["detail"] = "Croisement contre la tendance 1h/5m — entrée filtrée"
+                    tp = round(price + d * TP_R_MULT * sl_dist, 2)   # objectif 1 pour 2,5
+                    risk_eur = state["equity"] * RISK_PCT
+                    size_oz = max(0.01, (risk_eur * eurusd / sl_dist) // 0.01 / 100)
+                    trade_id = uuid.uuid4().hex[:12]
+                    state["last_flip_t"] = conf_t
+                    trades.append({
+                        "id": trade_id,
+                        "side": side,
+                        "entry_price": round(price, 2),
+                        "size_oz": size_oz,
+                        "sl": sl,
+                        "tp": tp,
+                        "status": "OPEN",
+                        "reason_open": reason,
+                        "opened_at": datetime.now(ZoneInfo("Europe/Paris")).isoformat(),
+                    })
+                    state.update({
+                        "open_side": side, "open_entry": price, "open_size": size_oz,
+                        "open_sl": sl, "open_sl_init": sl, "open_tp": tp, "open_reason": reason,
+                        "position_id": trade_id,
+                        "trail_peak": price if side == "LONG" else None,
+                        "trail_trough": price if side == "SHORT" else None,
+                        "open_time": datetime.now(ZoneInfo("Europe/Paris")).isoformat(),
+                    })
+                    result.update({
+                        "action": "OPEN_" + side,
+                        "detail": f"Trade ouvert : {side} {size_oz} oz @ {round(price,2)} | "
+                                  f"SL {sl} / TP {tp} (risque {round(RISK_PCT*100)}% pour viser 2,5R) | {reason}",
+                        "position": {"side": side, "entry": price, "size": size_oz,
+                                     "sl": sl, "tp": tp, "floating_eur": 0.0},
+                    })
+            elif result["detail"] in ("Aucun signal",):
+                result["detail"] = "Aucune confirmation — en surveillance"
 
     # ---- 3) sauvegarde de l'etat a chaque check
     state["last_price"] = round(price, 2)   # prix temps reel (ticker Coinbase)
