@@ -101,10 +101,12 @@ def atr14(highs, lows, closes):
 
 # ------------------------------------------------------------------- données
 
-def fetch_candles(symbol="PAXG-USD", interval=TIMEFRAME, range_="2d"):
+def fetch_candles(symbol="PAXG-USD", gran=None):
     """Bougies PAXG-USD (or spot, proxy du XAU/USD a +/-0.3%) via Coinbase.
-    Donnees temps reel 24/7 — contrairement a Yahoo (retard ~10 min)."""
-    gran = {"1m": 60, "5m": 300, "15m": 900}[TIMEFRAME]
+    Donnees temps reel 24/7 — contrairement a Yahoo (retard ~10 min).
+    gran = 60 (1m), 300 (5m) ou 3600 (1h)."""
+    if gran is None:
+        gran = {"1m": 60, "5m": 300, "15m": 900}[TIMEFRAME]
     r = requests.get(
         f"https://api.exchange.coinbase.com/products/{symbol}/candles?granularity={gran}",
         timeout=20,
@@ -226,10 +228,16 @@ def build_embed(heure, result, state):
                          f"EMA21 {result['ema21']} · ATR {result['atr']}",
                 "inline": False,
             },
+            {"name": "🧭 Tendances",
+                "value": f"1h {'📈 haussière' if result.get('trend_1h', 0) > 0 else ('📉 baissière' if result.get('trend_1h', 0) < 0 else '~ neutre')} · "
+                         f"5m {'📈 haussière' if result.get('trend_5m', 0) > 0 else ('📉 baissière' if result.get('trend_5m', 0) < 0 else '~ neutre')} · "
+                         "entrée 1m seulement si alignées",
+                "inline": False,
+            },
             {"name": "📌 Position", "value": pos_text, "inline": False},
             {"name": "🔢 Trades", "value": f"{state['trade_count']} trade(s) clôturé(s)", "inline": True},
         ],
-        "footer": {"text": "Bot trading papier — SCALPING XAU/USD 1 min, SL 1xATR / TP 1.5xATR, sortie max 2 h, risque 2% (GitHub Actions)"},
+        "footer": {"text": "Bot trading papier — SCALPING XAU/USD 1m aligné 5m/1h, SL 1xATR / TP 1.5xATR, sortie max 2 h, risque 2% (GitHub Actions)"},
     }
 
 
@@ -300,6 +308,21 @@ def run_cycle(state, trades):
     last = candles[i]
     price = live_price if live_price is not None else last["c"]
 
+    # ---- tendances superieures (multi-fuseaux 1h + 5m) :
+    # un croisement 1m n'ouvre une position QUE s'il est aligne avec la tendance 5m ET 1h.
+    def htf_trend(gran):
+        try:
+            htf = fetch_candles(gran=gran)
+            if len(htf) < 25:
+                return 0
+            cl = [x["c"] for x in htf]
+            e9, e21 = ema_series(cl, 9), ema_series(cl, 21)
+            return 1 if e9[-1] > e21[-1] else (-1 if e9[-1] < e21[-1] else 0)
+        except Exception:
+            return 0   # donnees indisponibles -> filtre neutralise ce cycle
+    trend_5m = htf_trend(300)
+    trend_1h = htf_trend(3600)
+
     # croisement RECENT dans les FLIP_WINDOW dernieres bougies : les runs GitHub
     # espaces de ~5 min peuvent rater le flip exact -> on cherche le flip recemment survenu
     FLIP_WINDOW = 8
@@ -322,6 +345,8 @@ def run_cycle(state, trades):
         "last_candle_t": last["t"],
         "price": price,
         "rsi": round(rsi, 1),
+        "trend_5m": trend_5m,
+        "trend_1h": trend_1h,
         "atr": round(atr, 2),
         "ema9": round(ema9[i], 2),
         "ema21": round(ema21[i], 2),
@@ -429,10 +454,10 @@ def run_cycle(state, trades):
             side, reason = None, ""
             if flip_t and flip_t <= state.get("last_flip_t", 0):
                 side = None  # flip deja joue (anti re-entree)
-            elif cross_up and 45 < rsi < 75:
-                side, reason = "LONG", f"EMA9 > EMA21 (croisement haussier), RSI {round(rsi)}"
-            elif cross_down and 25 < rsi < 55:
-                side, reason = "SHORT", f"EMA9 < EMA21 (croisement baissier), RSI {round(rsi)}"
+            elif cross_up and 45 < rsi < 75 and trend_1h >= 0 and trend_5m >= 0:
+                side, reason = "LONG", f"Croisement haussier 1m, aligné 5m {'↑' if trend_5m > 0 else '~'} / 1h {'↑' if trend_1h > 0 else '~'}, RSI {round(rsi)}"
+            elif cross_down and 25 < rsi < 55 and trend_1h <= 0 and trend_5m <= 0:
+                side, reason = "SHORT", f"Croisement baissier 1m, aligné 5m {'↓' if trend_5m < 0 else '~'} / 1h {'↓' if trend_1h < 0 else '~'}, RSI {round(rsi)}"
 
             if side:
                 d = 1 if side == "LONG" else -1
@@ -468,10 +493,14 @@ def run_cycle(state, trades):
                                  "sl": sl, "tp": tp, "floating_eur": 0.0},
                 })
             else:
-                result["detail"] = (
-                    "Croisement mais RSI non confirmé" if (cross_up or cross_down)
-                    else "Aucun croisement, en surveillance"
-                )
+                if side is None and flip_t and flip_t <= state.get("last_flip_t", 0):
+                    result["detail"] = "Flip déjà joué (anti re-entrée)"
+                elif not (cross_up or cross_down):
+                    result["detail"] = "Aucun croisement, en surveillance"
+                elif not ((cross_up and 45 < rsi < 75) or (cross_down and 25 < rsi < 55)):
+                    result["detail"] = "Croisement mais RSI non confirmé"
+                else:
+                    result["detail"] = "Croisement contre la tendance 1h/5m — entrée filtrée"
 
     # ---- 3) sauvegarde de l'etat a chaque check
     state["last_price"] = round(price, 2)   # prix temps reel (ticker Coinbase)
