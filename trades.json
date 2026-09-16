@@ -1,1 +1,13 @@
-[]
+[
+  {
+    "id": "1e2397cdc633",
+    "side": "LONG",
+    "entry_price": 4335.26,
+    "size_oz": 0.61,
+    "sl": 4333.38,
+    "tp": 4338.09,
+    "status": "OPEN",
+    "reason_open": "EMA9 > EMA21 (croisement haussier), RSI 75",
+    "opened_at": "2026-09-16T09:07:52.373314+02:00"
+  }
+]
