@@ -51,8 +51,12 @@
     "size_oz": 1.17,
     "sl": 4328.77,
     "tp": 4324.07,
-    "status": "OPEN",
+    "status": "CLOSED",
     "reason_open": "EMA9 < EMA21 (croisement baissier), RSI 27",
-    "opened_at": "2026-09-16T10:39:52.661601+02:00"
+    "opened_at": "2026-09-16T10:39:52.661601+02:00",
+    "exit_price": 4328.77,
+    "close_reason": "SL",
+    "closed_at": "2026-09-16T10:45:02.687021+02:00",
+    "pnl_eur": -1.9
   }
 ]
