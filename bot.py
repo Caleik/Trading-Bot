@@ -24,7 +24,7 @@ import os
 import sys
 import time
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
 import requests
@@ -46,6 +46,29 @@ SL_BUFFER_ATR = 0.3      # SL initial = creux (ou sommet) du retournement +/- 0.
 CONF_MAX_RUN_ATR = 2.5   # si le prix a deja couru > 2.5 x ATR au-dela du creux -> on ne chase pas
 DROP_MIN_ATR = 1.2       # la chute (resp. hausse) initiale doit faire >= 1.2 x ATR
 # trades 24/7 y compris la nuit, s'ils respectent la confirmation + le biais 1h
+
+# ---- BLACKOUT NEWS : pas de NOUVELLE entree autour des annonces USD a fort impact.
+# Les positions deja ouvertes restent geree normalement (SL/trail/TP inchanges).
+# Format : (debut_utc_iso, fin_utc_iso, label). A mettre a jour a chaque calendrier econo.
+NEWS_BLACKOUTS = [
+    ("2026-09-16T12:15:00+00:00", "2026-09-16T13:00:00+00:00", "US Retail Sales (14h30 Paris)"),
+    ("2026-09-16T17:45:00+00:00", "2026-09-16T19:30:00+00:00", "Fed Rate Decision + Press Conference (20h00/20h30 Paris)"),
+    ("2026-09-17T10:45:00+00:00", "2026-09-17T11:30:00+00:00", "BoE Interest Rate Decision (13h00 Paris)"),
+    ("2026-09-17T12:15:00+00:00", "2026-09-17T13:00:00+00:00", "US Housing Starts / Building Permits (14h30 Paris)"),
+]
+
+
+def active_news_blackout():
+    """Retourne le label de l'annonce en cours si on est dans une fenetre de blackout, sinon None."""
+    now = datetime.now(timezone.utc)
+    for start_s, end_s, label in NEWS_BLACKOUTS:
+        try:
+            start, end = datetime.fromisoformat(start_s), datetime.fromisoformat(end_s)
+        except Exception:
+            continue
+        if start <= now <= end:
+            return label
+    return None
 STARTING_EQUITY = 50.0   # capital papier initial en EUR
 PAUSE_THRESHOLD = 5.0    # le bot se met en pause si le capital tombe sous 5 EUR
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0"
@@ -502,8 +525,11 @@ def run_cycle(state, trades):
     # ---- 2) pas de position -> chercher une entree (confirmation requise, 24/7)
     elif state["status"] == "RUNNING":
         now_ms = datetime.now().timestamp() * 1000
+        news_label = active_news_blackout()
         if now_ms - last["t"] > 15 * 60 * 1000:   # PAXG a des periodes calmes : 15 min de tolerance
             result["detail"] = "Dernière bougie trop ancienne (marché fermé ?)"
+        elif news_label:
+            result["detail"] = f"Blackout news ({news_label}) — aucune nouvelle entrée"
         else:
             side, reason, swing = None, "", 0.0
             if conf_t and conf_t <= state.get("last_flip_t", 0):
