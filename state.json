@@ -11,12 +11,12 @@
   "open_time": "2026-09-16T14:45:51.952848+02:00",
   "open_reason": "Confirmation haussière : chute puis 2 clôtures 5m haussières, biais 1h ↑",
   "position_id": null,
-  "last_price": 4251.3,
-  "last_cycle": "2026-09-16T21:28:58.464596+02:00",
+  "last_price": 4253.88,
+  "last_cycle": "2026-09-16T21:30:15.422201+02:00",
   "eurusd": 1.1469,
-  "run_count": 636,
+  "run_count": 637,
   "dispatch_day": "2026-09-16",
-  "dispatches_today": 635,
+  "dispatches_today": 636,
   "last_report_ms": 1789586862371,
   "last_check_ms": 1789586700000,
   "last_flip_t": 1789562400000,
@@ -24,7 +24,7 @@
   "trail_peak": null,
   "trail_trough": null,
   "news_cache": {
-    "fetched_ms": 1789583384048,
+    "fetched_ms": 1789587015328,
     "events": [
       [
         "2026-09-15T05:30:00+00:00",
@@ -73,5 +73,5 @@
       ]
     ]
   },
-  "news_blackout_label": "USD — FOMC Press Conference (20h30 Paris)"
+  "news_blackout_label": null
 }
