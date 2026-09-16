@@ -156,8 +156,12 @@
     "size_oz": 0.9,
     "sl": 4347.27,
     "tp": 4353.17,
-    "status": "OPEN",
+    "status": "CLOSED",
     "reason_open": "Croisement haussier 1m, aligné 5m ↑ / 1h ↑, RSI 55",
-    "opened_at": "2026-09-16T13:30:49.748282+02:00"
+    "opened_at": "2026-09-16T13:30:49.748282+02:00",
+    "exit_price": 4347.27,
+    "close_reason": "SL",
+    "closed_at": "2026-09-16T13:38:23.026102+02:00",
+    "pnl_eur": -1.84
   }
 ]
