@@ -11,13 +11,13 @@
   "open_time": "2026-09-16T13:43:22.161157+02:00",
   "open_reason": "Croisement haussier 1m, aligné 5m ↑ / 1h ↑, RSI 60",
   "position_id": null,
-  "last_price": 4341.97,
-  "last_cycle": "2026-09-16T14:05:49.314081+02:00",
+  "last_price": 4345.79,
+  "last_cycle": "2026-09-16T14:07:06.197893+02:00",
   "eurusd": 1.1541,
-  "run_count": 285,
+  "run_count": 286,
   "dispatch_day": "2026-09-16",
-  "dispatches_today": 284,
-  "last_report_ms": 1789559674285,
+  "dispatches_today": 285,
+  "last_report_ms": 1789560426198,
   "last_check_ms": 1789560240000,
   "last_flip_t": 1789558740000
 }
