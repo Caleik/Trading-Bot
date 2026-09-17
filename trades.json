@@ -313,5 +313,16 @@
     "close_reason": "SL",
     "closed_at": "2026-09-17T16:42:05.571767+02:00",
     "pnl_eur": -1.7
+  },
+  {
+    "id": "94e30d737ba7",
+    "side": "LONG",
+    "entry_price": 4356.11,
+    "size_oz": 0.49,
+    "sl": 4352.19,
+    "tp": 4365.91,
+    "status": "OPEN",
+    "reason_open": "Confirmation haussière : chute puis 2 clôtures 5m haussières, biais 1h ↑",
+    "opened_at": "2026-09-17T18:44:54.185168+02:00"
   }
 ]
