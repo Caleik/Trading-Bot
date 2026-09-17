@@ -12,11 +12,11 @@
   "open_reason": "Confirmation baissière : hausse puis 2 clôtures 5m baissières, biais 1h ↓",
   "position_id": null,
   "last_price": 4307.61,
-  "last_cycle": "2026-09-17T08:29:51.337378+02:00",
-  "eurusd": 1.1478,
-  "run_count": 1100,
+  "last_cycle": "2026-09-17T08:31:04.331120+02:00",
+  "eurusd": 1.1481,
+  "run_count": 1101,
   "dispatch_day": "2026-09-17",
-  "dispatches_today": 411,
+  "dispatches_today": 412,
   "last_report_ms": 1789626063759,
   "last_check_ms": 1789626300000,
   "last_flip_t": 1789621500000,
@@ -24,7 +24,7 @@
   "trail_peak": null,
   "trail_trough": null,
   "news_cache": {
-    "fetched_ms": 1789623061297,
+    "fetched_ms": 1789626664282,
     "events": [
       [
         "2026-09-15T05:30:00+00:00",
