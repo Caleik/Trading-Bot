@@ -268,5 +268,16 @@
     "close_reason": "TRAIL",
     "closed_at": "2026-09-17T07:32:16.338881+02:00",
     "pnl_eur": 0.82
+  },
+  {
+    "id": "9f6e9d40fee0",
+    "side": "LONG",
+    "entry_price": 4325.79,
+    "size_oz": 0.35,
+    "sl": 4320.09,
+    "tp": 4340.04,
+    "status": "OPEN",
+    "reason_open": "Confirmation haussière : chute puis 2 clôtures 5m haussières, biais 1h ↑",
+    "opened_at": "2026-09-17T10:04:28.980352+02:00"
   }
 ]
