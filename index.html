@@ -544,18 +544,18 @@ async function refreshBTC() {
          <div class="row"><span>Ouverte le</span><span>${dateFr(state.open_time)}</span></div>`;
     } else {
       badge.textContent = 'AUCUNE'; badge.className = 'badge none';
-      body.innerHTML = '<div class="row"><span>—</span><span>En attente d'une confirmation</span></div>';
+      body.innerHTML = '<div class="row"><span>—</span><span>En attente d\'une confirmation</span></div>';
     }
     // IA : contenus evites + journal
     const avoid = (learning && learning.avoid) || {};
     const keys = Object.keys(avoid);
     document.getElementById('btcia').innerHTML = keys.length
-      ? '⛔ Contextes évités par l'IA : <b>' + keys.join('</b>, <b>') + '</b>'
-      : 'Aucun contexte évité pour l'instant — l'IA apprendra de ses premiers trades.';
+      ? '⛔ Contextes évités par l\'IA : <b>' + keys.join('</b>, <b>') + '</b>'
+      : 'Aucun contexte évité pour l\'instant — l\'IA apprendra de ses premiers trades.';
     const jb = document.getElementById('btcjournal');
     jb.innerHTML = '';
     const jn = [...(journal||[])].reverse();
-    if (!jn.length) jb.innerHTML = '<tr><td colspan="4" style="color:var(--muted)">L'IA n'a pas encore pris de décision — chaque trade fermé est analysé et les filtres s'ajusteront automatiquement.</td></tr>';
+    if (!jn.length) jb.innerHTML = '<tr><td colspan="4" style="color:var(--muted)">L\'IA n\'a pas encore pris de décision — chaque trade fermé est analysé et les filtres s'ajusteront automatiquement.</td></tr>';
     jn.slice(0, 25).forEach(e => {
       const tr = document.createElement('tr');
       const ico = e.type === 'AVOID' ? '⛔ stop' : (e.type === 'RELEASE' ? '✅ reprise' : '🔁 revue');
