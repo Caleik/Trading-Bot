@@ -441,8 +441,12 @@
     "size_oz": 0.37,
     "sl": 4347.08,
     "tp": 4364.16,
-    "status": "OPEN",
+    "status": "CLOSED",
     "reason_open": "Confirmation haussière : chute puis 2 clôtures 5m haussières, biais 1h ↑",
-    "opened_at": "2026-09-18T06:31:38.659486+02:00"
+    "opened_at": "2026-09-18T06:31:38.659486+02:00",
+    "exit_price": 4364.16,
+    "close_reason": "TP",
+    "closed_at": "2026-09-18T07:09:31.966039+02:00",
+    "pnl_eur": 3.93
   }
 ]
