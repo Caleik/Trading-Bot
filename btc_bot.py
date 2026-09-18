@@ -63,7 +63,7 @@ LEARN_AVOID_TTL_MS = 14 * 24 * 3600 * 1000   # un contexte évité est réessay�
 LEARN_REVIEW_EVERY = 25   # revue globale publieee tous les X trades fermes
 
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0"
-RELAY_URL = "https://superagent-583f72c3.base44.app/functions/discordTradingSend"
+RELAY_URL = "https://superagent-583f72c3.base44.app/functions/discordBtcSend"   # relais salon Bitcoin dedie
 CHECK_INTERVAL_SEC = int(os.environ.get("CHECK_INTERVAL_SEC", "60"))
 CHECKS_PER_RUN = int(os.environ.get("CHECKS_PER_RUN", "13"))
 STATE_FILE = "btc_state.json"
@@ -660,7 +660,7 @@ def detect_confirmation(win, atr, price):
 
 # ---------------------------------------------------------------------- main
 def main():
-    webhook = os.environ.get("DISCORD_WEBHOOK_URL", "")
+    webhook = os.environ.get("BTC_DISCORD_WEBHOOK_URL", "")   # vide : tout passe par le relais salon Bitcoin
     state = load_json(STATE_FILE, None)
     if state is None:
         state = {
