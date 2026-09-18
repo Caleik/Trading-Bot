@@ -555,7 +555,7 @@ async function refreshBTC() {
     const jb = document.getElementById('btcjournal');
     jb.innerHTML = '';
     const jn = [...(journal||[])].reverse();
-    if (!jn.length) jb.innerHTML = '<tr><td colspan="4" style="color:var(--muted)">L\'IA n\'a pas encore pris de décision — chaque trade fermé est analysé et les filtres s'ajusteront automatiquement.</td></tr>';
+    if (!jn.length) jb.innerHTML = '<tr><td colspan="4" style="color:var(--muted)">L\'IA n\'a pas encore pris de décision — chaque trade fermé est analysé et les filtres s\'ajusteront automatiquement.</td></tr>';
     jn.slice(0, 25).forEach(e => {
       const tr = document.createElement('tr');
       const ico = e.type === 'AVOID' ? '⛔ stop' : (e.type === 'RELEASE' ? '✅ reprise' : '🔁 revue');
