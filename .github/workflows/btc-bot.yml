@@ -28,8 +28,7 @@ jobs:
         run: pip install requests
       - name: Cycle du bot BTC (1 check ~60 s)
         env:
-          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
-          CHECKS_PER_RUN: "13"
+          CHECKS_PER_RUN: "1"
           CHECK_INTERVAL_SEC: "60"
         run: python btc_bot.py
       - name: Sauvegarder l'etat du bot BTC
