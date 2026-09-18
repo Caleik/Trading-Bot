@@ -448,5 +448,16 @@
     "close_reason": "TP",
     "closed_at": "2026-09-18T07:09:31.966039+02:00",
     "pnl_eur": 3.93
+  },
+  {
+    "id": "a7266c542ffc",
+    "side": "LONG",
+    "entry_price": 4383.3,
+    "size_oz": 0.22,
+    "sl": 4374.94,
+    "tp": 4404.2,
+    "status": "OPEN",
+    "reason_open": "Confirmation haussière : chute puis 2 clôtures 5m haussières, biais 1h ↑",
+    "opened_at": "2026-09-18T08:24:17.514074+02:00"
   }
 ]
