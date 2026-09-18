@@ -58,12 +58,13 @@
 </head>
 <body>
 <div class="wrap">
-  <h1>🥇 Panneau Bot Trading Or <span style="font-size:12px;color:var(--muted);font-weight:400">XAU/USD · compte papier</span></h1>
+  <h1>🥇 Panneau Bots Trading <span style="font-size:12px;color:var(--muted);font-weight:400">Or XAU/USD + Bitcoin BTC/USD · comptes papier</span></h1>
 
   <div class="tabs">
     <div class="tab active" id="tabbtn-1" onclick="switchTab(1)">💼 Portefeuille</div>
     <div class="tab" id="tabbtn-2" onclick="switchTab(2)">📈 Live marché</div>
     <div class="tab" id="tabbtn-3" onclick="switchTab(3)">📌 Positions</div>
+    <div class="tab" id="tabbtn-4" onclick="switchTab(4)">₿ Bot Bitcoin</div>
   </div>
 
   <!-- ================= ONGLET 1 : PORTEFEUILLE ================= -->
@@ -119,8 +120,33 @@
     </table></div>
   </div>
 
+
+  <!-- ================= ONGLET 4 : BOT BITCOIN ================= -->
+  <div id="tab-4" class="hidden">
+    <div class="sub" id="btcupd"><span class="spinner"></span>Chargement du bot Bitcoin…</div>
+    <div class="err" id="btcerr" style="display:none"></div>
+    <div class="grid" id="btc-cards">
+      <div class="card"><div class="label">💰 Capital BTC bot</div><div class="value" id="btceq">—</div><div class="sub" id="btcperf">—</div></div>
+      <div class="card"><div class="label">📊 Trades clôturés</div><div class="value" id="btctcount">—</div><div class="sub" id="btcwr">—</div></div>
+      <div class="card"><div class="label">₿ Bitcoin</div><div class="value" id="btcprice">—</div><div class="sub" id="btccycle">—</div></div>
+      <div class="card pos"><div class="label">📌 Position <span id="btcposbadge" class="badge none">AUCUNE</span></div><div id="btcposbody" class="pos" style="margin-top:6px">—</div></div>
+    </div>
+    <h2>🧠 Couche IA — journal des décisions</h2>
+    <div class="sub" id="btcia">—</div>
+    <div class="tbl"><table>
+      <thead><tr><th>Quand</th><th>Décision IA</th><th>Contexte</th><th>Détail</th></tr></thead>
+      <tbody id="btcjournal"></tbody>
+    </table></div>
+    <h2>🧾 Historique des trades BTC</h2>
+    <div class="tbl"><table>
+      <thead><tr><th>Fermé le</th><th>Sens</th><th>Entrée → Sortie</th><th>Motif</th><th>R (ratio)</th><th>Contexte</th><th>P&L (€)</th></tr></thead>
+      <tbody id="btctbody"></tbody>
+    </table></div>
+    <div class="sub" style="margin-top:10px">Stratégie BTC : confirmation stricte 5m (mouvement ≥ 2,4×ATR + 2 clôtures) + biais 1h · risque 1%/trade · TP 3R · BE +1R puis trailing 2×ATR · coupe-circuit journalier -3% · validée en backtest 60 j (+42 %, PF 1,16, DD 24 %).</div>
+  </div>
+
   <div class="footer">
-    Panneau d'affichage du bot de trading IA (stratégie EMA9/EMA21 + RSI + ATR, risque 2%/trade).<br>
+    Panneau d'affichage des bots de trading IA — 🥇 Or (confirmation 5m + biais 1h, risque 2%) et ₿ Bitcoin (confirmation stricte 5m + biais 1h, risque 1%, coupe-circuit -3%/jour, couche IA d'apprentissage).<br>
     💼 Données du bot : <code>state.json</code> / <code>trades.json</code> commités à chaque cycle GitHub Actions (actualisation 60 s).<br>
     📈 Cours live : or physique via PAXG/USD (Coinbase) — suit le spot XAU/USD à ±0,3% près (actualisation 30 s).<br>
     <span id="oanda">Compte broker (OANDA) : non connecté — mode compte papier.</span>
@@ -136,12 +162,13 @@ const TZ_OFFSET_SEC = -new Date().getTimezoneOffset() * 60; // affiche les heure
 
 // ===== ONGLETS =====
 function switchTab(n) {
-  for (const i of [1,2,3]) {
+  for (const i of [1,2,3,4]) {
     document.getElementById('tab-'+i).classList.toggle('hidden', i !== n);
     document.getElementById('tabbtn-'+i).classList.toggle('active', i === n);
   }
   if (n === 2) { if (LW.ready) refreshLive(); else buildLiveCharts().then(refreshLive); }
   if (n === 3) refreshPositions();
+  if (n === 4) refreshBTC();
 }
 
 // ===== UTILS COMMUNS =====
@@ -479,9 +506,92 @@ async function refreshPositions() {
 buildTFButtons();
 refresh();
 checkOanda();
+
+// ===== BOT BITCOIN (onglet 4) =====
+async function refreshBTC() {
+  const lu = document.getElementById('btcupd');
+  try {
+    const [state, trades, learning, journal] = await Promise.all([
+      fetchJson(RAW + '/btc_state.json'),
+      fetchJson(RAW + '/btc_trades.json').catch(() => []),
+      fetchJson(RAW + '/learning.json').catch(() => ({avoid:{}})),
+      fetchJson(RAW + '/btc_journal.json').catch(() => [])
+    ]);
+    document.getElementById('btcerr').style.display = 'none';
+    const eq = state.equity ?? 100, start = state.starting_equity ?? 100;
+    const perf = eq - start, perfPct = start ? perf / start * 100 : 0;
+    document.getElementById('btceq').textContent = fmt(eq) + ' €';
+    document.getElementById('btcperf').innerHTML = `<span class="${perf>=0?'gain':'perte'}">${perf>=0?'+':''}${fmt(perf)} € (${perf>=0?'+':''}${fmt(perfPct,1)} %)</span>`;
+    const closed = (trades||[]);
+    const wins = closed.filter(t => (t.pnl_eur||0) > 0).length;
+    document.getElementById('btctcount').textContent = state.trade_count ?? closed.length;
+    document.getElementById('btcwr').textContent = closed.length ? `${wins}/${closed.length} gagnants (${Math.round(wins/closed.length*100)} %) · ${fmt(closed.reduce((s,t)=>s+(t.r||0),0)/closed.length,2)} R/trade` : 'Aucun trade clôturé — le bot attend une confirmation';
+    document.getElementById('btcprice').textContent = state.last_price ? fmt(state.last_price,0) + ' $' : '—';
+    document.getElementById('btccycle').textContent = 'Statut : ' + (state.status === 'RUNNING' ? 'actif ✅' : 'en pause ⏸') + (state.last_cycle ? ' · ' + dateFr(state.last_cycle) : '');
+    const badge = document.getElementById('btcposbadge'), body = document.getElementById('btcposbody');
+    if (state.open_side === 'LONG' || state.open_side === 'SHORT') {
+      badge.textContent = state.open_side;
+      badge.className = 'badge ' + (state.open_side === 'LONG' ? 'long' : 'short');
+      const eurusd = state.eurusd || 1.1;
+      const d = state.open_side === 'LONG' ? 1 : -1;
+      const fl = (state.last_price - state.open_entry) * d * state.open_size / eurusd;
+      body.innerHTML =
+        `<div class="row"><span>Taille</span><span>${state.open_size} BTC</span></div>
+         <div class="row"><span>Entrée</span><span>${fmt(state.open_entry,0)} $</span></div>
+         <div class="row"><span>Stop loss</span><span>${fmt(state.open_sl,0)} $</span></div>
+         <div class="row"><span>Take profit (3R)</span><span>${fmt(state.open_tp,0)} $</span></div>
+         <div class="row"><span>P&L flottant</span><span class="${fl>=0?'gain':'perte'}">${fl>=0?'+':''}${fmt(fl)} €</span></div>
+         <div class="row"><span>Ouverte le</span><span>${dateFr(state.open_time)}</span></div>`;
+    } else {
+      badge.textContent = 'AUCUNE'; badge.className = 'badge none';
+      body.innerHTML = '<div class="row"><span>—</span><span>En attente d'une confirmation</span></div>';
+    }
+    // IA : contenus evites + journal
+    const avoid = (learning && learning.avoid) || {};
+    const keys = Object.keys(avoid);
+    document.getElementById('btcia').innerHTML = keys.length
+      ? '⛔ Contextes évités par l'IA : <b>' + keys.join('</b>, <b>') + '</b>'
+      : 'Aucun contexte évité pour l'instant — l'IA apprendra de ses premiers trades.';
+    const jb = document.getElementById('btcjournal');
+    jb.innerHTML = '';
+    const jn = [...(journal||[])].reverse();
+    if (!jn.length) jb.innerHTML = '<tr><td colspan="4" style="color:var(--muted)">L'IA n'a pas encore pris de décision — chaque trade fermé est analysé et les filtres s'ajusteront automatiquement.</td></tr>';
+    jn.slice(0, 25).forEach(e => {
+      const tr = document.createElement('tr');
+      const ico = e.type === 'AVOID' ? '⛔ stop' : (e.type === 'RELEASE' ? '✅ reprise' : '🔁 revue');
+      tr.innerHTML = `<td>${dateFr(new Date(e.t).toISOString())}</td><td><b>${ico}</b></td><td>${e.bucket||'—'}</td><td>${(e.reason||'').substring(0,140)}</td>`;
+      jb.appendChild(tr);
+    });
+    const tb = document.getElementById('btctbody');
+    tb.innerHTML = '';
+    const ordered = [...closed].reverse();
+    if (!ordered.length) tb.innerHTML = '<tr><td colspan="7" style="color:var(--muted)">Aucun trade BTC pour le moment.</td></tr>';
+    ordered.slice(0, 30).forEach(t => {
+      const tr = document.createElement('tr');
+      const pnl = t.pnl_eur;
+      tr.innerHTML =
+        `<td>${dateFr(t.t_out)}</td>
+         <td><span class="badge ${t.side==='LONG'?'long':'short'}">${t.side}</span></td>
+         <td>${fmt(t.entry,0)} → ${fmt(t.exit,0)} $</td>
+         <td>${t.reason}</td>
+         <td class="${(t.r||0)>=0?'gain':'perte'}">${fmt(t.r,2)}</td>
+         <td>${t.weekend ? 'WE' : 'sem.'} ${t.hour_paris}h · vol ${t.vol_pct}%</td>
+         <td class="${pnl>=0?'gain':'perte'}">${pnl>=0?'+':''}${fmt(pnl)} €</td>`;
+      tb.appendChild(tr);
+    });
+    lu.textContent = 'Dernière mise à jour : ' + new Date().toLocaleTimeString('fr-FR') + ' (fichiers commités à chaque cycle GitHub Actions)';
+  } catch (e) {
+    const box = document.getElementById('btcerr');
+    box.style.display = 'block';
+    box.innerHTML = `<b>⚠️ Impossible de charger le bot Bitcoin.</b><br>${e.message || e}<br>Vérifie que <code>btc_state.json</code> existe dans le dépôt (créé au premier cycle).`;
+    lu.textContent = 'Erreur de chargement du bot BTC.';
+  }
+}
+
 setInterval(refresh, 60000);
 setInterval(() => { if (!document.getElementById('tab-2').classList.contains('hidden') && LW.ready) refreshLive(); }, 30000);
 setInterval(() => { if (!document.getElementById('tab-3').classList.contains('hidden')) refreshPositions(); }, 30000);
+setInterval(() => { if (!document.getElementById('tab-4').classList.contains('hidden')) refreshBTC(); }, 30000);
 </script>
 </body>
 </html>
