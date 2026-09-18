@@ -661,60 +661,62 @@ def detect_confirmation(win, atr, price):
 # ---------------------------------------------------------------------- main
 def main():
     webhook = os.environ.get("DISCORD_WEBHOOK_URL", "")
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    state = load_json(STATE_FILE, {
-        "equity": STARTING_EQUITY, "starting_equity": STARTING_EQUITY,
-        "status": "RUNNING", "trade_count": 0,
-        "day_utc": None, "day_start_equity": STARTING_EQUITY,
-    })
+    state = load_json(STATE_FILE, None)
+    if state is None:
+        state = {
+            "equity": STARTING_EQUITY, "starting_equity": STARTING_EQUITY,
+            "status": "RUNNING", "trade_count": 0,
+            "day_utc": None, "day_start_equity": STARTING_EQUITY,
+        }
     trades = load_json(TRADES_FILE, [])
     learning = load_json(LEARN_FILE, {"avoid": {}, "strikes": {}})
     journal = load_json(JOURNAL_FILE, [])
 
-    # compteur de relances journalieres (cap 1200, comme le bot or)
+    # un seul check par run : run court (~30 s) que GitHub ne throttle pas,
+    # la surveillance continue vient de la chaine d'auto-relance (comme le bot or)
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     if state.get("dispatch_day") != today:
         state["dispatch_day"] = today
         state["dispatches_today"] = 0
     state["dispatches_today"] = state.get("dispatches_today", 0) + 1
 
-    for check in range(CHECKS_PER_RUN):
-        result, events = run_cycle(state, trades, learning, journal, webhook)
+    result, events = run_cycle(state, trades, learning, journal, webhook)
+    save_json(STATE_FILE, state)
+    save_json(TRADES_FILE, trades)
+    save_json(LEARN_FILE, learning)
+    save_json(JOURNAL_FILE, journal)
+
+    if result.get("action") == "ERROR":
+        print(json.dumps({"run": state.get("run_count", 0),
+                          "error": result["detail"]}, ensure_ascii=False))
+        return
+
+    # evenements immediats : BE, revue IA
+    for ev in events or []:
+        if ev.get("embed"):
+            post_discord(webhook, ev["embed"])
+        elif ev.get("text"):
+            post_discord(webhook, {
+                "title": "\u2139\uFE0F " + ev["text"],
+                "color": 0x3498DB,
+                "footer": {"text": "Bot BTC papier"}})
+
+    # ouverture / clôture -> embed dedie immediat
+    if result["action"].startswith(("OPEN_", "CLOSE_")):
+        emb = build_event_embed(result, state)
+        if emb:
+            post_discord(webhook, emb)
+
+    # compte-rendu cadence ~12 min (calé sur le temps réel, pas sur les runs)
+    now_ms = int(time.time() * 1000)
+    if now_ms - state.get("last_report_ms", 0) >= 12 * 60 * 1000:
+        heure = datetime.now(PARIS).strftime("%Hh%M")
+        post_discord(webhook, build_embed(heure, result, state, learning))
+        state["last_report_ms"] = now_ms
         save_json(STATE_FILE, state)
-        save_json(TRADES_FILE, trades)
-        save_json(LEARN_FILE, learning)
-        save_json(JOURNAL_FILE, journal)
 
-        # evenements (ouverture / clôture / BE / revue IA) -> Discord immediat
-        for ev in events or []:
-            if ev.get("embed"):
-                post_discord(webhook, ev["embed"])
-            elif ev.get("text"):
-                post_discord(webhook, {
-                    "title": "\u2139\uFE0F " + ev["text"],
-                    "color": 0x3498DB,
-                    "footer": {"text": "Bot BTC papier"}})
-
-        # compte-rendu cadence ~12 min (1 check sur 12), comme le bot or
-        now_ms = int(time.time() * 1000)
-        last = state.get("last_report_ms", 0)
-        if result["action"] != "ERROR" and (now_ms - last >= 12 * 60 * 1000 or check == CHECKS_PER_RUN - 1):
-            if now_ms - last >= 10 * 60 * 1000:   # eviter double envoi sur le dernier check
-                heure = datetime.now(PARIS).strftime("%Hh%M")
-                post_discord(webhook, build_embed(heure, result, state, learning))
-                state["last_report_ms"] = now_ms
-                save_json(STATE_FILE, state)
-
-        # ouverture/cloture -> embed dedie immediat
-        if result["action"].startswith(("OPEN_", "CLOSE_")):
-            emb = build_event_embed(result, state)
-            if emb:
-                post_discord(webhook, emb)
-
-        if check < CHECKS_PER_RUN - 1:
-            time.sleep(CHECK_INTERVAL_SEC)
-
-    print(f"Cycle BTC termine — {state.get('run_count', 0)} checks, capital {state['equity']} EUR, "
-          f"{state.get('trade_count', 0)} trades")
+    print(f"Check BTC #{state.get('run_count', 0)} OK — capital {state['equity']} EUR, "
+          f"{state.get('trade_count', 0)} trades, {result['action']}")
 
 
 if __name__ == "__main__":
