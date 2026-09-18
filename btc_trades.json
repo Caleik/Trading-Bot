@@ -1,1 +1,1 @@
-[]
+[{"side": "LONG", "entry": 80892.22, "exit": 80892.22, "sl": 80819.10836883992, "tp": 81111.55489348024, "size": 0.015714, "pnl_eur": 0.0, "r": 0.0, "reason": "TRAIL", "t_in": "2026-09-19T01:54:24.055496+02:00", "t_out": "2026-09-19T01:59:32.072029+02:00", "t_out_ms": 1789775972072, "dur_min": 5, "hour_paris": 1, "weekend": true, "vol_pct": 0.103, "rsi_in": 35.5, "b1h": 1, "reason_open": "Confirmation haussière : mouvement >= 2.4xATR puis 2 clôtures 5m, biais 1h ↑", "equity": 100.0}]
