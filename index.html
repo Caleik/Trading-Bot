@@ -65,6 +65,8 @@
     <div class="tab" id="tabbtn-2" onclick="switchTab(2)">📈 Live marché</div>
     <div class="tab" id="tabbtn-3" onclick="switchTab(3)">📌 Positions</div>
     <div class="tab" id="tabbtn-4" onclick="switchTab(4)">₿ Bot Bitcoin</div>
+    <div class="tab" id="tabbtn-5" onclick="switchTab(5)">📈 Live BTC</div>
+    <div class="tab" id="tabbtn-6" onclick="switchTab(6)">📌 Position BTC</div>
   </div>
 
   <!-- ================= ONGLET 1 : PORTEFEUILLE ================= -->
@@ -145,10 +147,45 @@
     <div class="sub" style="margin-top:10px">Stratégie BTC : confirmation stricte 5m (mouvement ≥ 2,4×ATR + 2 clôtures) + biais 1h · risque 1%/trade · TP 3R · BE +1R puis trailing 2×ATR · coupe-circuit journalier -3% · validée en backtest 60 j (+42 %, PF 1,16, DD 24 %).</div>
   </div>
 
+
+  <!-- ================= ONGLET 5 : LIVE BTC ================= -->
+  <div id="tab-5" class="hidden">
+    <div class="sub"><span class="spinner"></span><span id="btcliveupd">Chargement du cours du Bitcoin…</span></div>
+
+    <div class="grid">
+      <div class="card"><div class="label">₿ Cours du Bitcoin (live)</div><div class="value" id="btcliveprice">—</div><div class="sub" id="btclivechg">—</div></div>
+      <div class="card"><div class="label">🤖 Signal (logique du bot BTC)</div><div class="value" style="font-size:18px"><span id="btclivesignal" class="badge none">—</span></div><div class="sub" id="btclivesigdetail">—</div></div>
+    </div>
+
+    <div class="tfrow" id="btctfrow"></div>
+    <div class="legend">
+      <span><span class="dot" style="background:var(--gold)"></span>EMA 9</span>
+      <span><span class="dot" style="background:var(--blue)"></span>EMA 21</span>
+      <span id="btcohlclegend" style="margin-left:auto"></span>
+    </div>
+    <div class="chartbox" id="btclivewrap"></div>
+    <div class="legend"><span>RSI 14 — zones 30 (survendu) / 70 (suracheté)</span></div>
+    <div class="chartbox" id="btcrsiwrap"></div>
+    <div class="legend"><span>ATR 14 — volatilité (filtre de confirmation 2,4×ATR · trailing 2×ATR)</span></div>
+    <div class="chartbox" id="btcatrwrap"></div>
+    <div class="hint">👍 Pince à deux doigts pour zoomer · glisse pour naviguer dans le temps</div>
+  </div>
+
+  <!-- ================= ONGLET 6 : POSITION BTC ================= -->
+  <div id="tab-6" class="hidden">
+    <div class="sub"><span class="spinner"></span><span id="btcposupd">Chargement de la position BTC…</span></div>
+    <div id="btcpospanel"></div>
+    <h2>🧾 Derniers trades BTC clôturés</h2>
+    <div class="tbl"><table>
+      <thead><tr><th>Fermé le</th><th>Sens</th><th>Entrée → Sortie</th><th>Motif</th><th>P&L (€)</th></tr></thead>
+      <tbody id="btctbody3"></tbody>
+    </table></div>
+  </div>
+
   <div class="footer">
     Panneau d'affichage des bots de trading IA — 🥇 Or (confirmation 5m + biais 1h, risque 2%) et ₿ Bitcoin (confirmation stricte 5m + biais 1h, risque 1%, coupe-circuit -3%/jour, couche IA d'apprentissage).<br>
     💼 Données du bot : <code>state.json</code> / <code>trades.json</code> commités à chaque cycle GitHub Actions (actualisation 60 s).<br>
-    📈 Cours live : or physique via PAXG/USD (Coinbase) — suit le spot XAU/USD à ±0,3% près (actualisation 30 s).<br>
+    📈 Cours live : or physique via PAXG/USD (Coinbase) · Bitcoin via BTC-USD (Coinbase) — suit le spot XAU/USD à ±0,3% près (actualisation 30 s).<br>
     <span id="oanda">Compte broker (OANDA) : non connecté — mode compte papier.</span>
   </div>
 </div>
@@ -162,13 +199,15 @@ const TZ_OFFSET_SEC = -new Date().getTimezoneOffset() * 60; // affiche les heure
 
 // ===== ONGLETS =====
 function switchTab(n) {
-  for (const i of [1,2,3,4]) {
+  for (const i of [1,2,3,4,5,6]) {
     document.getElementById('tab-'+i).classList.toggle('hidden', i !== n);
     document.getElementById('tabbtn-'+i).classList.toggle('active', i === n);
   }
   if (n === 2) { if (LW.ready) refreshLive(); else buildLiveCharts().then(refreshLive); }
   if (n === 3) refreshPositions();
   if (n === 4) refreshBTC();
+  if (n === 5) { if (LWB.ready) refreshBtcLive(); else buildBtcCharts().then(refreshBtcLive); }
+  if (n === 6) refreshBtcPositions();
 }
 
 // ===== UTILS COMMUNS =====
@@ -330,8 +369,8 @@ function atr2(bars, n = 14) {
   return out;
 }
 
-async function fetchLive(tf) {
-  const r = await fetch(`https://api.exchange.coinbase.com/products/${LIVE_PAIR}/candles?granularity=${tf.g}`, { cache:'no-store' });
+async function fetchLive(tf, pair = LIVE_PAIR) {
+  const r = await fetch(`https://api.exchange.coinbase.com/products/${pair}/candles?granularity=${tf.g}`, { cache:'no-store' });
   if (!r.ok) throw new Error('HTTP ' + r.status);
   const raw = await r.json();
   return raw.map(c => ({ t: c[0] * 1000, l: c[1], h: c[2], o: c[3], c: c[4] })).reverse();
@@ -502,8 +541,170 @@ async function refreshPositions() {
   }
 }
 
+
+// ============================================================
+//  ONGLET 5 — LIVE BTC (graphiques tactiles, même structure que l'or)
+// ============================================================
+const LIVE_PAIR_BTC = 'BTC-USD';
+let curTFB = 1; // 5 min par défaut (TF de confirmation du bot BTC)
+const LWB = { ready:false, main:null, rsi:null, atr:null, candles:null, e9s:null, e21s:null, rsiS:null, atrS:null, syncing:false, fitted:false };
+
+function buildBtcTFButtons() {
+  const row = document.getElementById('btctfrow');
+  TFS.forEach((tf, i) => {
+    const b = document.createElement('div');
+    b.className = 'tf' + (i === curTFB ? ' active' : '');
+    b.textContent = tf.label;
+    b.onclick = () => { curTFB = i; LWB.fitted = false; [...row.children].forEach((el, j) => el.classList.toggle('active', j === i)); refreshBtcLive(); };
+    row.appendChild(b);
+  });
+  const reset = document.createElement('div');
+  reset.className = 'tf';
+  reset.textContent = '⟲ Vue complète';
+  reset.onclick = () => { if (LWB.ready) { LWB.main.timeScale().fitContent(); } };
+  row.appendChild(reset);
+}
+
+async function buildBtcCharts() {
+  if (typeof LightweightCharts === 'undefined') {
+    document.getElementById('btcliveupd').textContent = `Librairie de graphiques non chargée — vérifie ta connexion internet.`;
+    return;
+  }
+  const LWC = LightweightCharts;
+  LWB.main = LWC.createChart(document.getElementById('btclivewrap'), chartOpts());
+  LWB.candles = LWB.main.addSeries(LightweightCharts.CandlestickSeries, {
+    upColor: '#3fb950', downColor: '#f85149', wickUpColor: '#3fb950', wickDownColor: '#f85149',
+    borderVisible: false, priceFormat: { type: 'price', precision: 1, minMove: 0.1 }
+  });
+  LWB.e9s = LWB.main.addSeries(LightweightCharts.LineSeries, { color: '#f0b429', lineWidth: 2, priceLine: false, lastValueVisible: false, crosshairMarkerVisible: false });
+  LWB.e21s = LWB.main.addSeries(LightweightCharts.LineSeries, { color: '#58a6ff', lineWidth: 2, priceLine: false, lastValueVisible: false, crosshairMarkerVisible: false });
+  LWB.rsi = LWC.createChart(document.getElementById('btcrsiwrap'), chartOpts());
+  LWB.rsiS = LWB.rsi.addSeries(LightweightCharts.LineSeries, { color: '#58a6ff', lineWidth: 2, priceLine: false, lastValueVisible: false, crosshairMarkerVisible: false });
+  LWB.rsiS.createPriceLine({ price: 70, color: '#f85149', lineWidth: 1, lineStyle: LWC.LineStyle.Dashed, axisLabelVisible: false });
+  LWB.rsiS.createPriceLine({ price: 30, color: '#3fb950', lineWidth: 1, lineStyle: LWC.LineStyle.Dashed, axisLabelVisible: false });
+  LWB.atr = LWC.createChart(document.getElementById('btcatrwrap'), chartOpts());
+  LWB.atrS = LWB.atr.addSeries(LightweightCharts.LineSeries, { color: '#f0b429', lineWidth: 2, priceLine: false, lastValueVisible: false, crosshairMarkerVisible: false });
+  const group = [LWB.main, LWB.rsi, LWB.atr];
+  group.forEach(src => {
+    src.timeScale().subscribeVisibleLogicalRangeChange(range => {
+      if (!range || LWB.syncing) return;
+      LWB.syncing = true;
+      group.forEach(o => { if (o !== src) o.timeScale().setVisibleLogicalRange(range); });
+      LWB.syncing = false;
+    });
+  });
+  LWB.main.subscribeCrosshairMove(param => {
+    const el = document.getElementById('btcohlclegend');
+    if (!param.time || !param.seriesData.get(LWB.candles)) { el.textContent = ''; return; }
+    const b = param.seriesData.get(LWB.candles);
+    const up = b.close >= b.open;
+    el.innerHTML = `<span class="${up?'gain':'perte'}">O ${fmt(b.open,1)} H ${fmt(b.high,1)} B ${fmt(b.low,1)} C ${fmt(b.close,1)}</span>`;
+  });
+  LWB.ready = true;
+}
+
+async function refreshBtcLive() {
+  const tf = TFS[curTFB];
+  const upd = document.getElementById('btcliveupd');
+  try {
+    if (!LWB.ready) { await buildBtcCharts(); if (!LWB.ready) return; }
+    const [bars, bars1h] = await Promise.all([
+      fetchLive(tf, LIVE_PAIR_BTC),
+      fetchLive(TFS[3], LIVE_PAIR_BTC).catch(() => []),
+    ]);
+    if (!bars.length) throw new Error('aucune donnée');
+    const closes = bars.map(b => b.c);
+    const e9 = ema(closes, 9), e21 = ema(closes, 21), rr = rsi(closes, 14), aa = atr2(bars, 14);
+    const T = b => Math.floor(b.t / 1000) + TZ_OFFSET_SEC;
+    LWB.candles.setData(bars.map(b => ({ time: T(b), open: b.o, high: b.h, low: b.l, close: b.c })));
+    LWB.e9s.setData(bars.map((b, i) => e9[i] == null ? null : { time: T(b), value: e9[i] }).filter(Boolean));
+    LWB.e21s.setData(bars.map((b, i) => e21[i] == null ? null : { time: T(b), value: e21[i] }).filter(Boolean));
+    LWB.rsiS.setData(bars.map((b, i) => rr[i] == null ? null : { time: T(b), value: rr[i] }).filter(Boolean));
+    LWB.atrS.setData(bars.map((b, i) => aa[i] == null ? null : { time: T(b), value: aa[i] }).filter(Boolean));
+    if (!LWB.fitted) { LWB.main.timeScale().fitContent(); LWB.fitted = true; }
+    const last = bars[bars.length - 1];
+    const chg = last.c - bars[0].c, chgPct = bars[0].c ? chg / bars[0].c * 100 : 0;
+    document.getElementById('btcliveprice').textContent = fmt(last.c, 0) + ' $';
+    document.getElementById('btclivechg').innerHTML = `<span class="${chg>=0?'gain':'perte'}">${chg>=0?'+':''}${fmt(chg,0)} $ (${chg>=0?'+':''}${fmt(chgPct,2)} %) sur la période affichée</span>`;
+    // biais 1h (EMA9/21) comme le bot
+    let biais = null;
+    if (bars1h.length >= 21) {
+      const c1h = bars1h.map(b => b.c);
+      const b9 = ema(c1h, 9), b21 = ema(c1h, 21);
+      const v9 = b9[b9.length-1], v21 = b21[b21.length-1];
+      if (v9 != null && v21 != null) biais = v9 > v21;
+    }
+    const le9 = e9[e9.length-1], le21 = e21[e21.length-1], lr = rr[rr.length-1];
+    const sig = document.getElementById('btclivesignal'), det = document.getElementById('btclivesigdetail');
+    if (le9 == null || lr == null) { sig.textContent = '—'; sig.className = 'badge none'; det.textContent = 'En attente de suffisamment de données'; }
+    else if (biais === true && le9 > le21 && lr < 70) { sig.textContent = 'ACHAT 🟢'; sig.className = 'badge long'; det.textContent = `Biais 1h haussier, EMA9 > EMA21 et RSI ${fmt(lr,1)} < 70 — le bot cherchera une confirmation 5m (≥ 2,4×ATR + 2 clôtures)`; }
+    else if (biais === false && le9 < le21 && lr > 30) { sig.textContent = 'VENTE 🔴'; sig.className = 'badge short'; det.textContent = `Biais 1h baissier, EMA9 < EMA21 et RSI ${fmt(lr,1)} > 30 — le bot cherchera une confirmation 5m (≥ 2,4×ATR + 2 clôtures)`; }
+    else if (biais === null) { sig.textContent = 'ATTENTE ⏳'; sig.className = 'badge none'; det.textContent = `EMA9 ${le9>le21?'>':'<'} EMA21 sur ${tf.label} — biais 1h indisponible ce cycle`; }
+    else { sig.textContent = 'ATTENTE ⏳'; sig.className = 'badge none'; det.textContent = `Biais 1h ${biais?'haussier':'baissier'} mais la configuration ${tf.label} ne confirme pas (EMA/RSI)`; }
+    upd.textContent = `Cours du Bitcoin · actualisé à ${new Date().toLocaleTimeString('fr-FR')} · rafraîchissement auto 30 s · ${bars.length} bougies ${tf.label}`;
+  } catch (e) {
+    upd.textContent = 'Erreur de chargement du cours BTC : ' + e.message;
+  }
+}
+
+// ============================================================
+//  ONGLET 6 — POSITION BTC EN COURS (P&L live + barre SL/TP)
+// ============================================================
+async function refreshBtcPositions() {
+  const upd = document.getElementById('btcposupd');
+  try {
+    const [state, trades, tick] = await Promise.all([
+      fetchJson(RAW + '/btc_state.json'),
+      fetchJson(RAW + '/btc_trades.json').catch(() => []),
+      fetch('https://api.exchange.coinbase.com/products/BTC-USD/ticker').then(r => r.json()),
+    ]);
+    let eurusd = state.eurusd;
+    if (!eurusd) { try { const fx = await (await fetch('https://api.frankfurter.app/latest?from=USD&to=EUR')).json(); eurusd = 1 / (fx.rates && fx.rates.EUR || 0.867); } catch (e) { eurusd = 1.153; } }
+    const live = parseFloat(tick.price);
+    const panel = document.getElementById('btcpospanel');
+    const side = state.open_side;
+    if (side === 'LONG' || side === 'SHORT') {
+      const d = side === 'LONG' ? 1 : -1;
+      const entry = state.open_entry, sl = state.open_sl, tp = state.open_tp, size = state.open_size;
+      const plEur = (live - entry) * d * size / eurusd;
+      const plPct = entry ? ((live - entry) * d / entry) * 100 : 0;
+      const span = Math.abs(tp - sl) || 1;
+      const posBar = side === 'LONG' ? (live - sl) / span : (sl - live) / span;
+      const markPct = Math.max(2, Math.min(98, posBar * 100));
+      panel.innerHTML = `
+        <div class="card">
+          <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px">
+            <div style="font-size:16px; font-weight:700"><span class="badge ${side === 'LONG' ? 'long' : 'short'}">${side === 'LONG' ? '🟢 ACHAT (LONG)' : '🔴 VENTE (SHORT)'}</span>
+            <span style="color:var(--muted); font-weight:400; font-size:13px">ouvert ${dateFr(state.open_time)}</span></div>
+          </div>
+          <div style="margin-top:8px; font-size:13px; color:var(--muted)">${state.open_reason || ''}</div>
+          <div class="posgrid">
+            <div><div class="k">Entrée</div><div class="v">${fmt(entry,0)} $</div></div>
+            <div><div class="k">Cours live</div><div class="v">${fmt(live,0)} $</div></div>
+            <div><div class="k">Taille</div><div class="v">${fmt(size,5)} BTC</div></div>
+            <div><div class="k">P&L flottant</div><div class="v"><span class="${plEur >= 0 ? 'gain' : 'perte'}">${plEur >= 0 ? '+' : ''}${fmt(plEur)} € (${plPct >= 0 ? '+' : ''}${fmt(plPct, 2)} %)</span></div></div>
+          </div>
+          <div class="rng"><div class="mark" style="left:${markPct}%"></div></div>
+          <div class="rnglab"><span>🎯 TP ${fmt(tp,0)} $</span><span>🛑 SL ${fmt(sl,0)} $</span></div>
+        </div>`;
+      upd.textContent = `Position BTC suivie · cours actualisé à ${new Date().toLocaleTimeString('fr-FR')} · rafraîchissement auto 30 s`;
+    } else {
+      panel.innerHTML = `<div class="empty">⏳ Aucune position BTC en cours<br><span style="font-size:12px">Le bot attend une confirmation stricte 5m (≥ 2,4×ATR + 2 clôtures) alignée avec le biais 1h — tu recevras un message Discord dès l'ouverture d'un trade.</span></div>`;
+      upd.textContent = state.last_cycle ? `Bot BTC en surveillance · dernier cycle à ${dateFr(state.last_cycle)} · actualisation 30 s` : '';
+    }
+    const closed = (trades || []).slice(-8).reverse();
+    document.getElementById('btctbody3').innerHTML = closed.length ? closed.map(t => `
+      <tr><td>${dateFr(t.t_out)}</td><td><span class="badge ${t.side==='LONG'?'long':'short'}">${t.side}</span></td><td>${fmt(t.entry,0)} → ${t.exit != null ? fmt(t.exit,0) : '—'}</td>
+      <td>${t.reason || '—'}</td><td class="${(t.pnl_eur || 0) >= 0 ? 'gain' : 'perte'}">${(t.pnl_eur || 0) >= 0 ? '+' : ''}${fmt(t.pnl_eur)} €</td></tr>`).join('')
+      : '<tr><td colspan="5" style="color:var(--muted); text-align:center; padding:16px">Aucun trade BTC clôturé pour l\u2019instant</td></tr>';
+  } catch (e) {
+    upd.textContent = 'Erreur de chargement de la position BTC : ' + e.message;
+  }
+}
+
 // ===== DÉMARRAGE =====
 buildTFButtons();
+buildBtcTFButtons();
 refresh();
 checkOanda();
 
@@ -592,6 +793,8 @@ setInterval(refresh, 60000);
 setInterval(() => { if (!document.getElementById('tab-2').classList.contains('hidden') && LW.ready) refreshLive(); }, 30000);
 setInterval(() => { if (!document.getElementById('tab-3').classList.contains('hidden')) refreshPositions(); }, 30000);
 setInterval(() => { if (!document.getElementById('tab-4').classList.contains('hidden')) refreshBTC(); }, 30000);
+setInterval(() => { if (!document.getElementById('tab-5').classList.contains('hidden') && LWB.ready) refreshBtcLive(); }, 30000);
+setInterval(() => { if (!document.getElementById('tab-6').classList.contains('hidden')) refreshBtcPositions(); }, 30000);
 </script>
 </body>
 </html>
