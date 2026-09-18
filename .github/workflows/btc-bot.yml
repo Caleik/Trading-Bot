@@ -1,0 +1,62 @@
+name: Bot Trading Bitcoin IA
+
+on:
+  schedule:
+    # SECOURS uniquement : la surveillance continue vient de l'auto-relance
+    # en fin de run (chaine) + le watchdog Base44 qui rebranche si la chaine casse.
+    - cron: "17,47 * * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: btc-bot
+  cancel-in-progress: false
+
+jobs:
+  run-btc-bot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Installer les dependances
+        run: pip install requests
+      - name: Cycle du bot BTC (1 check ~60 s)
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          CHECKS_PER_RUN: "13"
+          CHECK_INTERVAL_SEC: "60"
+        run: python btc_bot.py
+      - name: Sauvegarder l'etat du bot BTC
+        if: always()
+        run: |
+          git config user.name "BTC Trading Bot"
+          git config user.email "actions@github.com"
+          git add btc_state.json btc_trades.json learning.json btc_journal.json
+          if git diff --cached --quiet; then
+            echo "Rien a commiter"
+          else
+            git commit -m "cycle BTC $(date -u '+%Y-%m-%d %H:%M UTC')"
+            git pull --rebase --autostash origin main
+            git push
+          fi
+      - name: Relancer le prochain cycle (chaine continue ~60-90 s)
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          sleep 60
+          DISPATCHES=$(python3 -c "import json;print(json.load(open('btc_state.json')).get('dispatches_today',0))" 2>/dev/null || echo 0)
+          QUEUED=$(gh api "repos/Caleik/Trading-Bot/actions/workflows/btc-bot.yml/runs?status=queued&per_page=5" --jq '.total_count' 2>/dev/null || echo 1)
+          echo "relances aujourd'hui: $DISPATCHES | runs en file: $QUEUED"
+          if [ "$DISPATCHES" -lt 1200 ] && [ "$QUEUED" -eq 0 ]; then
+            gh api -X POST repos/Caleik/Trading-Bot/actions/workflows/btc-bot.yml/dispatches -f ref=main
+            echo "prochain cycle BTC relance"
+          else
+            echo "relance ignoree (cap journalier atteint ou run deja en file)"
+          fi
