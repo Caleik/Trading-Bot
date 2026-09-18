@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Panneau Bot Trading Or XAU/USD</title>
+<title>Panneau Bots Trading — Or & Bitcoin</title>
 <script src="https://cdn.jsdelivr.net/npm/lightweight-charts@5.2.1/dist/lightweight-charts.standalone.production.js"></script>
 <script>if (typeof LightweightCharts === 'undefined') { document.write('<script src="https://unpkg.com/lightweight-charts@5.2.1/dist/lightweight-charts.standalone.production.js"><\/script>'); }</script>
 <style>
@@ -13,8 +13,16 @@
   .wrap { max-width:900px; margin:0 auto; }
   h1 { font-size:20px; display:flex; align-items:center; gap:10px; margin-bottom:4px; flex-wrap:wrap; }
   .sub { color:var(--muted); font-size:13px; margin-bottom:14px; }
-  .tabs { display:flex; gap:8px; margin-bottom:16px; }
-  .tab { flex:1; text-align:center; padding:10px; border-radius:10px; background:var(--card); border:1px solid var(--border); color:var(--muted); font-weight:700; font-size:14px; cursor:pointer; }
+  .nav { position:sticky; top:0; z-index:50; background:rgba(13,17,23,.92); backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px); border-bottom:1px solid var(--border); margin:-16px -16px 16px; padding:10px 16px 12px; }
+  .navhead { display:flex; align-items:baseline; gap:10px; flex-wrap:wrap; margin-bottom:10px; }
+  .navhead .brand { font-size:16px; font-weight:800; }
+  .navhead .tag { font-size:11px; color:var(--muted); }
+  .tabs { display:flex; gap:6px; overflow-x:auto; -webkit-overflow-scrolling:touch; scrollbar-width:none; }
+  .tabs::-webkit-scrollbar { display:none; }
+  .tab { flex:0 0 auto; white-space:nowrap; text-align:center; padding:8px 14px; border-radius:999px; background:var(--card); border:1px solid var(--border); color:var(--muted); font-weight:700; font-size:13px; cursor:pointer; transition:color .15s, border-color .15s, background .15s; }
+  .tab:hover { color:var(--text); border-color:var(--muted); }
+  .navgroup { flex:0 0 auto; align-self:center; font-size:11px; font-weight:800; color:var(--muted); text-transform:uppercase; letter-spacing:1px; padding:0 6px 0 2px; }
+  .navsep { flex:0 0 auto; width:1px; align-self:stretch; background:var(--border); margin:2px 6px; }
   .tab.active { border-color:var(--gold); color:var(--gold); background:rgba(240,180,41,.08); }
   .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:12px; margin-bottom:16px; }
   .card { background:var(--card); border:1px solid var(--border); border-radius:10px; padding:14px; }
@@ -58,16 +66,23 @@
 </head>
 <body>
 <div class="wrap">
-  <h1>🥇 Panneau Bots Trading <span style="font-size:12px;color:var(--muted);font-weight:400">Or XAU/USD + Bitcoin BTC/USD · comptes papier</span></h1>
-
-  <div class="tabs">
-    <div class="tab active" id="tabbtn-1" onclick="switchTab(1)">💼 Portefeuille</div>
-    <div class="tab" id="tabbtn-2" onclick="switchTab(2)">📈 Live marché</div>
-    <div class="tab" id="tabbtn-3" onclick="switchTab(3)">📌 Positions</div>
-    <div class="tab" id="tabbtn-4" onclick="switchTab(4)">₿ Bot Bitcoin</div>
-    <div class="tab" id="tabbtn-5" onclick="switchTab(5)">📈 Live BTC</div>
-    <div class="tab" id="tabbtn-6" onclick="switchTab(6)">📌 Position BTC</div>
-  </div>
+  <nav class="nav">
+    <div class="navhead">
+      <span class="brand">🏅 Panneau Bots Trading</span>
+      <span class="tag">Or XAU/USD + Bitcoin BTC/USD · comptes papier</span>
+    </div>
+    <div class="tabs">
+      <span class="navgroup">🥇 Or</span>
+      <div class="tab active" id="tabbtn-1" onclick="switchTab(1)">💼 Portefeuille</div>
+      <div class="tab" id="tabbtn-2" onclick="switchTab(2)">📈 Live marché</div>
+      <div class="tab" id="tabbtn-3" onclick="switchTab(3)">📌 Positions</div>
+      <span class="navsep"></span>
+      <span class="navgroup">₿ Bitcoin</span>
+      <div class="tab" id="tabbtn-4" onclick="switchTab(4)">🤖 Bot Bitcoin</div>
+      <div class="tab" id="tabbtn-5" onclick="switchTab(5)">📈 Live BTC</div>
+      <div class="tab" id="tabbtn-6" onclick="switchTab(6)">📌 Position BTC</div>
+    </div>
+  </nav>
 
   <!-- ================= ONGLET 1 : PORTEFEUILLE ================= -->
   <div id="tab-1">
