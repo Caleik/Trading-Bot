@@ -101,6 +101,12 @@
       <thead><tr><th>Ouvert le</th><th>Sens</th><th>Taille (oz)</th><th>Entrée</th><th>Sortie</th><th>Motif clôture</th><th>Raison d'ouverture</th><th>P&L (€)</th></tr></thead>
       <tbody id="tbody"></tbody>
     </table></div>
+    <h2>🧠 Couche IA Or — journal des décisions</h2>
+    <div class="sub" id="goldia">—</div>
+    <div class="tbl"><table>
+      <thead><tr><th>Quand</th><th>Décision IA</th><th>Contexte</th><th>Détail</th></tr></thead>
+      <tbody id="goldjournal"></tbody>
+    </table></div>
   </div>
 
   <!-- ================= ONGLET 2 : LIVE MARCHÉ ================= -->
@@ -281,7 +287,12 @@ function drawChart(trades, startingEquity) {
 async function refresh() {
   const lu = document.getElementById('lastupd');
   try {
-    const [state, trades] = await Promise.all([fetchJson(RAW + '/state.json'), fetchJson(RAW + '/trades.json')]);
+    const [state, trades, goldlearning, goldjournal] = await Promise.all([
+      fetchJson(RAW + '/state.json'),
+      fetchJson(RAW + '/trades.json'),
+      fetchJson(RAW + '/gold_learning.json').catch(() => ({avoid:{}})),
+      fetchJson(RAW + '/gold_journal.json').catch(() => [])
+    ]);
     document.getElementById('errbox').style.display = 'none';
     const eq = state.equity ?? 50, start = state.starting_equity ?? 50;
     const perf = eq - start, perfPct = start ? perf / start * 100 : 0;
@@ -321,10 +332,26 @@ async function refresh() {
          <td>${fmt(t.size_oz)}</td>
          <td>${fmt(t.entry_price)}</td>
          <td>${t.exit_price ? fmt(t.exit_price) : '—'}</td>
-         <td>${t.close_reason ? ({SL:'🛑 Stop loss',TP:'✅ Take profit',SIGNAL_INVERSE:'🔄 Signal inverse'}[t.close_reason]||t.close_reason) : (t.status==='OPEN'?'⏳ En cours':'—')}</td>
+         <td>${t.close_reason ? ({SL:'🛑 Stop loss',TP:'✅ Take profit',BE:'🛡️ Break even',WEEKEND:'🏠 Week-end',SIGNAL_INVERSE:'🔄 Signal inverse'}[t.close_reason]||t.close_reason) : (t.status==='OPEN'?'⏳ En cours':'—')}</td>
          <td style="max-width:220px;overflow:hidden;text-overflow:ellipsis">${t.reason_open||'—'}</td>
          <td class="${pnl==null?'':(pnl>=0?'gain':'perte')}">${pnl==null?'—':(pnl>=0?'+':'')+fmt(pnl)}</td>`;
       tb.appendChild(tr);
+    });
+    // IA or : contextes evites + journal
+    const gavoid = (goldlearning && goldlearning.avoid) || {};
+    const gkeys = Object.keys(gavoid);
+    document.getElementById('goldia').innerHTML = gkeys.length
+      ? '⛔ Contextes évités par l\'IA : <b>' + gkeys.join('</b>, <b>') + '</b>'
+      : 'Aucun contexte évité pour l\'instant — l\'IA analyse chaque trade fermé et filtre les créneaux perdants (pause week-end : ven. 20h → lun. 01h).';
+    const gj = document.getElementById('goldjournal');
+    gj.innerHTML = '';
+    const gjn = [...(goldjournal||[])].reverse();
+    if (!gjn.length) gj.innerHTML = '<tr><td colspan="4" style="color:var(--muted)">L\'IA n\'a pas encore pris de décision — chaque trade fermé est analysé par contexte (tranche 4h × volatilité).</td></tr>';
+    gjn.slice(0, 25).forEach(e => {
+      const tr = document.createElement('tr');
+      const ico = e.type === 'AVOID' ? '⛔ stop' : (e.type === 'RELEASE' ? '✅ reprise' : '🔁 revue');
+      tr.innerHTML = `<td>${dateFr(new Date(e.t).toISOString())}</td><td><b>${ico}</b></td><td>${e.bucket||'—'}</td><td>${(e.reason||'').substring(0,140)}</td>`;
+      gj.appendChild(tr);
     });
     lu.textContent = 'Dernière actualisation : ' + new Date().toLocaleTimeString('fr-FR') + ' · données commitées à chaque cycle (15 min)';
   } catch (e) { renderError(e.message); }

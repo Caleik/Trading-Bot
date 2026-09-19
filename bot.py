@@ -41,6 +41,23 @@ RISK_PCT = 0.02          # risque par trade : 2% du capital
 # ou au stop — aucun trailing, aucune cloture temporelle (demande Enzo 19/09).
 TIMEFRAME = "5m"         # bougies 5 minutes (base de la confirmation)
 # (plus de trailing stop depuis le 19/09 : le trade court jusqu'au TP ou au SL)
+
+# ---- PAUSE WEEK-END (demande Enzo 19/09) : marche de l'or ferme ----
+WEEKEND_START_H = 20   # vendredi 20h00 Paris : plus aucune prise de trade
+WEEKEND_RESUME_H = 1   # lundi 01h00 Paris : reprise (l'or spot redemarre avec l'Asie)
+
+# ---- COUCHE IA (portee du bot BTC, demande Enzo 19/09) ----
+LEARN_MIN_TRADES = 10     # nb min de trades dans un contexte avant de le juger
+LEARN_WINDOW = 15         # juge sur les 15 derniers trades du contexte
+LEARN_BAD_R = -0.15       # esperance en R sous laquelle un contexte est "mauvais"
+LEARN_RELEASE_R = 0.05    # esperance recente au-dessus de laquelle on reactive
+LEARN_STRIKES = 2         # 2 revues consecutives mauvaises avant d'eviter un contexte
+LEARN_COOLDOWN_MS = 12 * 3600 * 1000   # max 1 NOUVEL avoid par 12 h
+LEARN_AVOID_TTL_MS = 14 * 24 * 3600 * 1000   # contexte evite reessaie apres 14 jours
+LEARN_REVIEW_EVERY = 25   # revue globale publiee tous les X trades fermes
+VOL_CALME_PCT = 0.08      # ATR 5m < 0.08% du prix = contexte "calme", sinon "nerveux"
+LEARNING_FILE = "gold_learning.json"
+JOURNAL_FILE = "gold_journal.json"
 BE_R_MULT = 1.0          # breakeven des que le prix fait +1 x le risque (trade "couvert")
 TP_R_MULT = 2.5          # objectif = 2,5 x le risque : trades "1 pour 2,5" (vision d'Enzo)
 SL_BUFFER_ATR = 0.3      # SL initial = creux (ou sommet) du retournement +/- 0.3 x ATR
@@ -112,6 +129,136 @@ CHECKS_PER_RUN = int(os.environ.get("CHECKS_PER_RUN", "13"))           # ~13 min
 
 
 # ---------------------------------------------------------------- utilitaires
+
+def weekend_block(now_paris):
+    """True si le marche de l'or est ferme : du vendredi 20h au lundi 01h (Paris).
+    (Demande Enzo 19/09 : le week-end le gold est ferme, pas de prise de trade.)"""
+    wd, h = now_paris.weekday(), now_paris.hour
+    return (wd == 4 and h >= WEEKEND_START_H) or wd in (5, 6) or (wd == 0 and h < WEEKEND_RESUME_H)
+
+
+# ---------------------------------------------------------------- couche IA
+def bucket_of(trade):
+    """Cle de contexte d'un trade : tranche 4h Paris x regime de volatilite."""
+    h = trade.get("hour_paris")
+    if h is None:
+        return None
+    vol = "calme" if trade.get("vol_pct", 0) < VOL_CALME_PCT else "nerveux"
+    return f"{h // 4 * 4:02d}-{h // 4 * 4 + 4:02d}h {vol}"
+
+
+def bucket_stats(trades, key):
+    """(n, wr, exp_r) sur les LEARN_WINDOW derniers trades du contexte."""
+    b = [t for t in trades if bucket_of(t) == key and t.get("r") is not None][-LEARN_WINDOW:]
+    if not b:
+        return None
+    wins = [t for t in b if (t.get("pnl_eur") or 0) > 0]
+    wr = round(len(wins) / len(b) * 100)
+    exp_r = round(sum(t["r"] for t in b) / len(b), 2)
+    return {"n": len(b), "wr": wr, "exp_r": exp_r}
+
+
+def review_learning(state, trades, learning, journal):
+    """Apres un trade ferme : recalcule chaque contexte et decide des filtres.
+    Retourne les nouvelles entrees de journal (publiees par main sur Discord)."""
+    new_entries = []
+    now_ms = int(time.time() * 1000)
+    keys = sorted({k for t in trades if (k := bucket_of(t))})
+    for key in keys:
+        st = bucket_stats(trades, key)
+        if st is None or st["n"] < LEARN_MIN_TRADES:
+            continue
+        avoided = key in learning.get("avoid", {})
+        if not avoided:
+            if st["exp_r"] < LEARN_BAD_R:
+                learning.setdefault("strikes", {})[key] = learning.get("strikes", {}).get(key, 0) + 1
+                if learning["strikes"][key] >= LEARN_STRIKES:
+                    if now_ms - learning.get("last_avoid_ms", 0) >= LEARN_COOLDOWN_MS:
+                        learning.setdefault("avoid", {})[key] = {"since": now_ms, "stats": st}
+                        learning["last_avoid_ms"] = now_ms
+                        learning["strikes"][key] = 0
+                        new_entries.append({
+                            "t": now_ms, "type": "AVOID", "bucket": key, "stats": st,
+                            "title": "Contexte perdant identifié",
+                            "reason": (f"{key} : {st['n']} trades, {st['wr']} % victoires, "
+                                       f"esperance {st['exp_r']} R — j'arrete d'entrer dans ce creneau")})
+            else:
+                learning["strikes"][key] = 0
+        else:
+            since = learning["avoid"][key].get("since", 0)
+            if now_ms - since >= LEARN_AVOID_TTL_MS:
+                del learning["avoid"][key]
+                learning["strikes"][key] = LEARN_STRIKES - 1
+                new_entries.append({
+                    "t": now_ms, "type": "RELEASE", "bucket": key, "stats": st,
+                    "title": "Contexte remis à l'essai",
+                    "reason": (f"{key} : 14 jours d'évitement écoulés — je reteste ce contexte "
+                               f"en période d'essai")})
+                continue
+            after = [t for t in trades if bucket_of(t) == key and t.get("t_out_ms", 0) > since]
+            if len(after) >= 3 and sum(t["r"] for t in after) / len(after) > LEARN_RELEASE_R:
+                del learning["avoid"][key]
+                st2 = {"n": len(after),
+                       "wr": round(len([t for t in after if (t.get("pnl_eur") or 0) > 0]) / len(after) * 100),
+                       "exp_r": round(sum(t["r"] for t in after) / len(after), 2)}
+                new_entries.append({
+                    "t": now_ms, "type": "RELEASE", "bucket": key, "stats": st2,
+                    "title": "Contexte réactivé",
+                    "reason": f"{key} : {st2['n']} trades depuis l'évitement, esperance {st2['exp_r']} R — je reteste"})
+    if state.get("trade_count", 0) % LEARN_REVIEW_EVERY == 0 and state.get("trade_count", 0) > 0:
+        summary = []
+        for key in keys:
+            st = bucket_stats(trades, key)
+            if st and st["n"] >= LEARN_MIN_TRADES:
+                summary.append(f"{key} : {st['wr']} % WR, {st['exp_r']} R")
+        if summary:
+            new_entries.append({
+                "t": now_ms, "type": "REVIEW", "bucket": "global", "stats": {},
+                "title": "Revue périodique", "reason": " | ".join(summary)[:900]})
+    learning["last_review_ms"] = now_ms
+    if new_entries:
+        journal.extend(new_entries)
+        journal[:] = journal[-200:]
+    return new_entries
+
+
+def entry_blocked_by_learning(learning, hour_paris, vol_pct):
+    """None si l'entree est autorisee, sinon le contexte evite."""
+    vol = "calme" if (vol_pct or 0) < VOL_CALME_PCT else "nerveux"
+    key = f"{hour_paris // 4 * 4:02d}-{hour_paris // 4 * 4 + 4:02d}h {vol}"
+    if key in learning.get("avoid", {}):
+        return key
+    return None
+
+
+def build_ia_embed(entries, learning, state):
+    """Revue IA : ce que le bot a appris de ses derniers trades."""
+    fields = []
+    for e in entries[-3:]:
+        if e["type"] == "AVOID":
+            v = ("\U0001F6AB N'entre plus dans **" + e["bucket"] + "**\n"
+                 + str(e["stats"]["n"]) + " trades · " + str(e["stats"]["wr"]) + " % victoires · "
+                 + "esperance " + str(e["stats"]["exp_r"]) + " R — j'évite ce contexte")
+        elif e["type"] == "RELEASE":
+            v = ("\u2705 Réactive **" + e["bucket"] + "**\n"
+                 + "esperance recente redevenue positive — je retente ce contexte")
+        else:
+            v = str(e.get("reason", ""))[:300]
+        fields.append({"name": e.get("title", e["type"]), "value": v, "inline": False})
+    if not fields:
+        fields.append({"name": "Bilan", "value": "Rien de nouveau à signaler.", "inline": False})
+    return {
+        "title": "\U0001F9E0 REVUE IA OR — j'apprends de mes trades",
+        "color": 0x9B59B6,
+        "fields": fields + [
+            {"name": "\U0001F5F3 Contextes évités actuellement", "inline": False,
+             "value": "\n".join("· " + k for k in learning.get("avoid", {})) or "aucun"},
+            {"name": "\U0001F522 Recul", "inline": True,
+             "value": str(state.get("trade_count", 0)) + " trades analysés"},
+        ],
+        "footer": {"text": "L'IA n'ajuste QUE les filtres d'entrée — risque 2%, SL, TP 2,5R et breakeven restent intangibles"},
+    }
+
 
 def load_json(path, default):
     if os.path.exists(path):
@@ -303,7 +450,7 @@ def build_embed(heure, result, state):
             {"name": "📌 Position", "value": pos_text, "inline": False},
             {"name": "🔢 Trades", "value": f"{state['trade_count']} trade(s) clôturé(s)", "inline": True},
         ],
-        "footer": {"text": "Bot trading papier — CONFIRMATION 5m (2 clôtures) + biais 1h · risque 2% → objectif 2,5R · breakeven à +1R puis on laisse courir jusqu'au TP ou au stop · 24/7"},
+        "footer": {"text": "Bot trading papier — CONFIRMATION 5m (2 clôtures) + biais 1h · risque 2% → objectif 2,5R · breakeven à +1R puis on laisse courir jusqu'au TP ou au stop · lun 01h–ven 20h (pause week-end) · IA apprend des trades"},
     }
 
 
@@ -335,6 +482,8 @@ def build_event_embed(result, state):
             title, color = "🎯 TAKE PROFIT ATTEINT — trade clôturé", 0x2ECC71
         elif reason == "SL":
             title, color = "🛑 STOP LOSS TOUCHÉ — trade clôturé", 0xE74C3C
+        elif reason == "WEEKEND":
+            title, color = "🏠 Clôture week-end — marché de l'or fermé, position sécurisée", 0xE67E22
         elif reason == "BE":
             title, color = "🛡️ Break even touché — trade protégé, clôturé à l'équilibre", 0x3498DB
         else:
@@ -354,7 +503,7 @@ def build_event_embed(result, state):
 
 # ---------------------------------------------------------------------- main
 
-def run_cycle(state, trades):
+def run_cycle(state, trades, learning, journal):
     """Un check complet : recuperation des bougies, indicateurs, decisions, sauvegarde."""
     try:
         candles = fetch_candles()
@@ -446,6 +595,12 @@ def run_cycle(state, trades):
     # calendrier eco auto (cache 1 h dans state) : label si une annonce bloque les entrees
     news_label = active_news_blackout(state)
     state["news_blackout_label"] = news_label
+    # pause week-end (marche de l'or ferme) + contexte IA courant
+    now_paris = datetime.now(ZoneInfo("Europe/Paris"))
+    weekend_now = weekend_block(now_paris)
+    state["weekend_active"] = weekend_now
+    vol_pct = round(atr / price * 100, 3) if price else 0.0
+    avoid_key = entry_blocked_by_learning(learning, now_paris.hour, vol_pct)
 
     result = {
         "last_candle_t": last["t"],
@@ -454,6 +609,7 @@ def run_cycle(state, trades):
         "trend_5m": trend_5m,
         "trend_1h": trend_1h,
         "atr": round(atr, 2),
+        "weekend": weekend_now,
         "ema9": round(ema9[i], 2),
         "ema21": round(ema21[i], 2),
         "action": "NONE",
@@ -525,6 +681,11 @@ def run_cycle(state, trades):
                     exit_price, close_reason = state["open_sl"], "SL"
                 elif live_price <= state["open_tp"]:
                     exit_price, close_reason = state["open_tp"], "TP"
+        # week-end : marche de l'or ferme -> on securise la position avant la pause
+        if exit_price is None and weekend_now:
+            exit_price = round(live_price or price, 2)
+            close_reason = "WEEKEND"
+
         # libelle honnete : SL initial jamais deplace = "SL", stop remis a l'entree = "BE"
         if close_reason == "SL":
             sl_init = state.get("open_sl_init")
@@ -543,6 +704,8 @@ def run_cycle(state, trades):
                         "close_reason": close_reason,
                         "closed_at": datetime.now(ZoneInfo("Europe/Paris")).isoformat(),
                         "pnl_eur": round(pnl_eur, 2),
+                        "r": round(pnl_eur / t["risk_eur"], 2) if t.get("risk_eur") else None,
+                        "t_out_ms": int(time.time() * 1000),
                     })
                     break
             state.update({
@@ -560,6 +723,10 @@ def run_cycle(state, trades):
                 "detail": f"Trade fermé ({close_reason}) : "
                           f"{'+' if pnl_eur >= 0 else ''}{round(pnl_eur, 2)} EUR",
             })
+            # couche IA : analyser le trade ferme, ajuster les filtres d'entree
+            ia_new = review_learning(state, trades, learning, journal)
+            if ia_new:
+                result["ia_entries"] = ia_new
         else:
             result["action"] = "HOLD"
             result["detail"] = "Position ouverte maintenue"
@@ -567,10 +734,14 @@ def run_cycle(state, trades):
     # ---- 2) pas de position -> chercher une entree (confirmation requise, 24/7)
     elif state["status"] == "RUNNING":
         now_ms = datetime.now().timestamp() * 1000
-        if now_ms - last["t"] > 15 * 60 * 1000:   # PAXG a des periodes calmes : 15 min de tolerance
+        if weekend_now:
+            result["detail"] = "🏠 Week-end — marché de l'or fermé, aucune prise de trade (reprise lundi 01h)"
+        elif now_ms - last["t"] > 15 * 60 * 1000:   # PAXG a des periodes calmes : 15 min de tolerance
             result["detail"] = "Dernière bougie trop ancienne (marché fermé ?)"
         elif news_label:
             result["detail"] = f"Blackout news ({news_label}) — aucune nouvelle entrée"
+        elif avoid_key:
+            result["detail"] = f"🧠 IA : contexte évité ({avoid_key}) — pas d'entrée"
         else:
             side, reason, swing = None, "", 0.0
             if conf_t and conf_t <= state.get("last_flip_t", 0):
@@ -613,7 +784,11 @@ def run_cycle(state, trades):
                         "tp": tp,
                         "status": "OPEN",
                         "reason_open": reason,
-                        "opened_at": datetime.now(ZoneInfo("Europe/Paris")).isoformat(),
+                        "opened_at": now_paris.isoformat(),
+                        "hour_paris": now_paris.hour,
+                        "vol_pct": vol_pct,
+                        "rsi_in": round(rsi, 1),
+                        "risk_eur": round(risk_eur, 2),
                     })
                     state.update({
                         "open_side": side, "open_entry": price, "open_size": size_oz,
@@ -661,8 +836,11 @@ def main():
             "position_id": None,
         }
     trades = load_json(TRADES_FILE, [])
+    learning = load_json(LEARNING_FILE, {"avoid": {}, "strikes": {}})
+    journal = load_json(JOURNAL_FILE, [])
     webhook = os.environ.get("DISCORD_WEBHOOK_URL", "")
     prev_blackout = state.get("news_blackout_label")
+    prev_weekend = state.get("weekend_active")
 
     # un seul check par run : run court (~30 s) que GitHub ne throttle pas
     state["run_count"] = state.get("run_count", 0) + 1
@@ -671,8 +849,24 @@ def main():
         state["dispatch_day"] = today
         state["dispatches_today"] = 0
     state["dispatches_today"] = state.get("dispatches_today", 0) + 1
-    result = run_cycle(state, trades)
+    result = run_cycle(state, trades, learning, journal)
     heure = datetime.now(ZoneInfo("Europe/Paris")).strftime("%H:%M:%S")
+    # transitions pause/reprise week-end -> message Discord dedie
+    cur_weekend = state.get("weekend_active")
+    if cur_weekend and not prev_weekend:
+        post_discord(webhook, {
+            "title": "🏠 Pause week-end — marché de l'or fermé",
+            "description": "Aucune nouvelle entrée jusqu'à lundi 01h (Paris). "
+                           "Position éventuelle clôturée pour le week-end.",
+            "color": 0xE67E22,
+            "footer": {"text": "Le bot Bitcoin prend le relais 24/7"},
+        }, username="Bot Or \U0001F9E1")
+    elif prev_weekend and not cur_weekend:
+        post_discord(webhook, {
+            "title": "🔁 Reprise — le marché de l'or est ouvert",
+            "description": "L'Asie a ouvert : le bot reprend les entrées confirmées.",
+            "color": 0x2ECC71,
+        }, username="Bot Or \U0001F9E1")
     # transition de blackout news -> message Discord dedie (debut ou fin de fenetre d'annonce)
     cur_blackout = state.get("news_blackout_label")
     if cur_blackout != prev_blackout and result.get("action") != "ERROR":
@@ -699,6 +893,10 @@ def main():
         event = build_event_embed(result, state)
         if event:
             ok, info = post_discord(webhook, event)
+        # revue IA : le bot annonce ce qu'il a appris du trade ferme
+        if result.get("ia_entries"):
+            post_discord(webhook, build_ia_embed(result["ia_entries"], learning, state),
+                         username="Bot Or \U0001F9E0")
         # compte-rendu complet calé sur le TEMPS REEL (>= 12 min depuis le precedent),
         # independant des runs manques/throttles
         now_ms = int(time.time() * 1000)
@@ -716,6 +914,8 @@ def main():
 
     save_json(STATE_FILE, state)
     save_json(TRADES_FILE, trades)
+    save_json(LEARNING_FILE, learning)
+    save_json(JOURNAL_FILE, journal)
 
 
 if __name__ == "__main__":
