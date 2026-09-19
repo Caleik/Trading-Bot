@@ -12,11 +12,11 @@
   "open_reason": "Confirmation haussière : chute puis 2 clôtures 5m haussières, biais 1h ↑",
   "position_id": "3df8f4442c53",
   "last_price": 4367.1,
-  "last_cycle": "2026-09-19T02:56:57.727948+02:00",
+  "last_cycle": "2026-09-19T02:58:09.670781+02:00",
   "eurusd": 1.1489,
-  "run_count": 3110,
+  "run_count": 3111,
   "dispatch_day": "2026-09-19",
-  "dispatches_today": 140,
+  "dispatches_today": 141,
   "last_report_ms": 1789778883794,
   "last_check_ms": 1789779000000,
   "last_flip_t": 1789778400000,
@@ -24,7 +24,7 @@
   "trail_peak": 4367.8,
   "trail_trough": null,
   "news_cache": {
-    "fetched_ms": 1789775832863,
+    "fetched_ms": 1789779489418,
     "events": [
       [
         "2026-09-15T05:30:00+00:00",
