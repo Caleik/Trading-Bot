@@ -28,7 +28,7 @@ Strategie (validee en backtest — voir REGLes ci-dessous) :
 - Coupe-circuit jour : si le jour UTC en cours perd 3% ou plus, PLUS AUCUNE
   nouvelle entree jusqu'au lendemain (les positions ouvertes restent gerees).
 - Sorties : SL structurel (+0.3 ATR), TP = 3R (ratio 1:3), breakeven a +1R,
-  puis trailing stop 2 x ATR qui ne recule jamais.
+  puis ON LAISSE COURIR jusqu'au TP ou au stop — plus de trailing (demande Enzo 19/09).
 - Prix : Coinbase BTC-USD (spot, temps reel, 24/7).
 """
 import json, os, time
@@ -38,7 +38,7 @@ import requests
 
 # ------------------------------------------------------------------- regles
 TIMEFRAME = "5m"
-TRAIL_ATR = 2.0
+# (plus de trailing stop depuis le 19/09 : apres le BE le stop reste a l'entree)
 BE_R_MULT = 1.0
 TP_R_MULT = 3.0          # ratio 1 pour 3
 SL_BUFFER_ATR = 0.3
@@ -207,7 +207,7 @@ def build_embed(heure, result, state, learning):
     action = result["action"]
     emoji = ("\u2705" if action.startswith("CLOSE_TP") else
              "\U0001F6D1" if action.startswith("CLOSE_SL") else
-             "\U0001F512" if action.startswith("CLOSE_TRAIL") else
+             "🛡️" if action.startswith("CLOSE_BE") else
              "\U0001F3AF" if action.startswith("OPEN") else "\u23F3")
     gates = result.get("gates") or {}
     ia_txt = f"{len(learning.get('avoid', {}))} contexte(s) evite(s) par l'IA"
@@ -232,7 +232,7 @@ def build_embed(heure, result, state, learning):
             {"name": "\U0001F522 Trades", "inline": True,
              "value": f"{state.get('trade_count', 0)} ferme(s) · {result.get('today_pnl', 0)} EUR aujourd'hui"},
         ],
-        "footer": {"text": "Bot BTC papier — CONFIRMATION 5m stricte + biais 1h · risque 1% -> TP 3R · BE +1R puis trail 2xATR · coupe-circuit -3%/jour · IA apprend de ses trades"},
+        "footer": {"text": "Bot BTC papier — CONFIRMATION 5m stricte + biais 1h · risque 1% -> TP 3R · BE +1R puis on laisse courir jusqu'au TP ou stop · coupe-circuit -3%/jour · IA apprend de ses trades"},
     }
 
 
@@ -262,8 +262,8 @@ def build_event_embed(result, state):
             title, color = "\U0001F3AF TAKE PROFIT BTC — trade gagné", 0x2ECC71
         elif reason == "SL":
             title, color = "\U0001F6D1 STOP LOSS BTC — trade clôturé", 0xE74C3C
-        elif reason == "TRAIL":
-            title, color = "\U0001F512 Sortie trailing BTC — position clôturée", 0x3498DB
+        elif reason == "BE":
+            title, color = "🛡️ Break even BTC — trade protégé, clôturé à l'équilibre", 0x3498DB
         else:
             title, color = "\u21A9\uFE0F Position BTC clôturée", 0x9B59B6
         return {
@@ -303,7 +303,7 @@ def build_ia_embed(entries, learning, state):
             {"name": "\U0001F522 Recul", "inline": True,
              "value": f"{state.get('trade_count', 0)} trades analysés"},
         ],
-        "footer": {"text": "L'IA n'ajuste QUE les filtres d'entrée — risque 1%, SL, TP 3R et trailing restent intangibles"},
+        "footer": {"text": "L'IA n'ajuste QUE les filtres d'entrée — risque 1%, SL, TP 3R et breakeven restent intangibles"},
     }
 
 
@@ -477,26 +477,14 @@ def run_cycle(state, trades, learning, journal, webhook):
             "floating_eur": round(floating_eur, 2)}
         result["detail"] = f"Position {state['open_side']} en cours"
 
-        # breakeven a +1R puis trailing 2xATR qui ne recule jamais
+        # breakeven a +1R : stop remis a l'entree pour proteger le trade,
         moved = (price - state["open_entry"]) * d
         risk_init = abs(state["open_entry"] - state["open_sl_init"])
         if risk_init > 0 and not state.get("open_be") and moved >= BE_R_MULT * risk_init:
             state["open_be"] = True
             state["open_sl"] = state["open_entry"]
             events.append({"type": "BE", "text": f"\U0001F512 Breakeven posé (trade couvert) sur la position BTC {state['open_side']}"})
-        if state.get("open_be"):
-            if d == 1:
-                peak = max(state.get("trail_peak", state["open_entry"]), price)
-                state["trail_peak"] = peak
-                new_sl = max(state["open_sl"], peak - TRAIL_ATR * atr)
-                if new_sl > state["open_sl"]:
-                    state["open_sl"] = new_sl
-            else:
-                trough = min(state.get("trail_trough", state["open_entry"]), price)
-                state["trail_trough"] = trough
-                new_sl = min(state["open_sl"], trough + TRAIL_ATR * atr)
-                if new_sl < state["open_sl"]:
-                    state["open_sl"] = new_sl
+        # apres le breakeven, le stop RESTE a l'entree : pas de trailing (demande Enzo 19/09)
 
         # sorties SL / TP (prix temps reel)
         hit_sl = price <= state["open_sl"] if d == 1 else price >= state["open_sl"]
@@ -505,7 +493,7 @@ def run_cycle(state, trades, learning, journal, webhook):
             exit_price = state["open_sl"] if hit_sl else state["open_tp"]
             reason = "SL" if hit_sl else "TP"
             if hit_sl and state.get("open_be"):
-                reason = "TRAIL"       # SL touche apres breakeven = sortie protegee
+                reason = "BE"           # SL touche apres breakeven = sortie protegee a l'entree
             pnl_eur = (exit_price - state["open_entry"]) * d * state["open_size"] / eurusd
             state["equity"] = round(state["equity"] + pnl_eur, 4)
             r_mult = round(((exit_price - state["open_entry"]) * d) / risk_init, 2) if risk_init else 0

@@ -159,7 +159,7 @@
       <thead><tr><th>Fermé le</th><th>Sens</th><th>Entrée → Sortie</th><th>Motif</th><th>R (ratio)</th><th>Contexte</th><th>P&L (€)</th></tr></thead>
       <tbody id="btctbody"></tbody>
     </table></div>
-    <div class="sub" style="margin-top:10px">Stratégie BTC : confirmation stricte 5m (mouvement ≥ 2,4×ATR + 2 clôtures) + biais 1h · risque 1%/trade · TP 3R · BE +1R puis trailing 2×ATR · coupe-circuit journalier -3% · validée en backtest 60 j (+42 %, PF 1,16, DD 24 %).</div>
+    <div class="sub" style="margin-top:10px">Stratégie BTC : confirmation stricte 5m (mouvement ≥ 2,4×ATR + 2 clôtures) + biais 1h · risque 1%/trade · TP 3R · BE +1R puis on laisse courir jusqu'au TP ou au stop (plus de trailing) · coupe-circuit journalier -3% · validée en backtest 60 j (+42 %, PF 1,16, DD 24 %).</div>
   </div>
 
 
@@ -181,7 +181,7 @@
     <div class="chartbox" id="btclivewrap"></div>
     <div class="legend"><span>RSI 14 — zones 30 (survendu) / 70 (suracheté)</span></div>
     <div class="chartbox" id="btcrsiwrap"></div>
-    <div class="legend"><span>ATR 14 — volatilité (filtre de confirmation 2,4×ATR · trailing 2×ATR)</span></div>
+    <div class="legend"><span>ATR 14 — volatilité (filtre de confirmation 2,4×ATR)</span></div>
     <div class="chartbox" id="btcatrwrap"></div>
     <div class="hint">👍 Pince à deux doigts pour zoomer · glisse pour naviguer dans le temps</div>
   </div>

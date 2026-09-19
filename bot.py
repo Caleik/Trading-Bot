@@ -37,9 +37,10 @@ RISK_PCT = 0.02          # risque par trade : 2% du capital
 # la 1re bougie 5m qui CLOTURE dans le sens inverse, puis une 2e bougie qui confirme.
 # Entree seulement apres cette double confirmation, dans le sens du biais 1h — 24/7.
 # Gestion : risque 2% par trade, objectif fixe a 2,5 x le risque (1 pour 2,5),
-# breakeven a +1R, puis trailing 2xATR qui ne recule jamais.
+# breakeven a +1R (stop remis a l'entree) puis ON LAISSE COURIR jusqu'au TP
+# ou au stop — aucun trailing, aucune cloture temporelle (demande Enzo 19/09).
 TIMEFRAME = "5m"         # bougies 5 minutes (base de la confirmation)
-TRAIL_ATR = 2.0          # apres +1R : le stop suit a 2 x ATR(5m) derriere l'extremum
+# (plus de trailing stop depuis le 19/09 : le trade court jusqu'au TP ou au SL)
 BE_R_MULT = 1.0          # breakeven des que le prix fait +1 x le risque (trade "couvert")
 TP_R_MULT = 2.5          # objectif = 2,5 x le risque : trades "1 pour 2,5" (vision d'Enzo)
 SL_BUFFER_ATR = 0.3      # SL initial = creux (ou sommet) du retournement +/- 0.3 x ATR
@@ -264,15 +265,15 @@ def build_embed(heure, result, state):
         emoji = "✅"
     elif action.startswith("CLOSE_SL"):
         emoji = "🛑"
-    elif action.startswith("CLOSE_TRAIL"):
-        emoji = "🔒"
+    elif action.startswith("CLOSE_BE"):
+        emoji = "🛡️"
     elif action.startswith("OPEN"):
         emoji = "🎯"
     else:
         emoji = "⏳"
     color = 0x2ECC71 if (action.startswith("CLOSE_TP") or action.startswith("OPEN")) else (
         0xE74C3C if action.startswith("CLOSE_SL") else (
-            0x3498DB if action.startswith("CLOSE_TRAIL") else 0x9B59B6
+            0x3498DB if action.startswith("CLOSE_BE") else 0x9B59B6
         )
     )
     sign = "+" if perf >= 0 else ""
@@ -302,7 +303,7 @@ def build_embed(heure, result, state):
             {"name": "📌 Position", "value": pos_text, "inline": False},
             {"name": "🔢 Trades", "value": f"{state['trade_count']} trade(s) clôturé(s)", "inline": True},
         ],
-        "footer": {"text": "Bot trading papier — CONFIRMATION 5m (2 clôtures) + biais 1h · risque 2% → objectif 2,5R · breakeven à +1R puis trailing 2xATR · 24/7"},
+        "footer": {"text": "Bot trading papier — CONFIRMATION 5m (2 clôtures) + biais 1h · risque 2% → objectif 2,5R · breakeven à +1R puis on laisse courir jusqu'au TP ou au stop · 24/7"},
     }
 
 
@@ -334,8 +335,8 @@ def build_event_embed(result, state):
             title, color = "🎯 TAKE PROFIT ATTEINT — trade clôturé", 0x2ECC71
         elif reason == "SL":
             title, color = "🛑 STOP LOSS TOUCHÉ — trade clôturé", 0xE74C3C
-        elif reason == "TRAIL":
-            title, color = "🔒 Sortie trailing (stop protégé) — position clôturée", 0x3498DB
+        elif reason == "BE":
+            title, color = "🛡️ Break even touché — trade protégé, clôturé à l'équilibre", 0x3498DB
         else:
             title, color = "↩️ Position clôturée", 0x9B59B6
         return {
@@ -476,7 +477,9 @@ def run_cycle(state, trades):
 
         exit_price, close_reason = None, None
         is_long = state["open_side"] == "LONG"
-        # ---- TRAILING STOP 2xATR : suit le prix, ne recule jamais.
+        # ---- SORTIES SL / TP : le trade court jusqu'au TP ou au stop.
+        # A +1R en faveur, le stop passe a l'entree (breakeven) pour proteger le trade,
+        # puis ON NE LE TOUCHE PLUS — pas de trailing (demande Enzo 19/09).
         # Verifie sur TOUTES les bougies depuis le dernier check (remplissage retroactif).
         try:
             open_ms = datetime.fromisoformat(state["open_time"]).timestamp() * 1000
@@ -488,46 +491,45 @@ def run_cycle(state, trades):
         if is_long:
             peak = max(state.get("trail_peak") or state["open_entry"], state["open_entry"])
             for cd in missed:
-                # convention bougie : 1) SL (prix du debut de bougie), 2) TP, 3) le trail
-                # ne se serre qu'APRES la bougie favorable -> pas d'optimisme intrabare
+                # convention bougie : 1) SL (prix du debut de bougie), 2) TP
                 if cd["l"] <= state["open_sl"]:
-                    exit_price, close_reason = state["open_sl"], "TRAIL"; break
+                    exit_price, close_reason = state["open_sl"], "SL"; break
                 if cd["h"] >= state["open_tp"]:
                     exit_price, close_reason = state["open_tp"], "TP"; break
-                peak = max(peak, cd["h"])                      # le trail suit les plus hauts
+                peak = max(peak, cd["h"])
                 state["trail_peak"] = peak
-                # breakeven puis trailing, seulement apres +1R en faveur
+                # breakeven : a +1R en faveur, stop remis a l'entree — et c'est tout
                 if r_unit > 0 and peak >= state["open_entry"] + BE_R_MULT * r_unit:
-                    cand = max(state["open_entry"], peak - TRAIL_ATR * atr)
-                    state["open_sl"] = max(state["open_sl"], round(cand, 2))
+                    if state["open_sl"] < state["open_entry"]:
+                        state["open_sl"] = state["open_entry"]
             if exit_price is None and live_price is not None:
                 if live_price <= state["open_sl"]:
-                    exit_price, close_reason = state["open_sl"], "TRAIL"
+                    exit_price, close_reason = state["open_sl"], "SL"
                 elif live_price >= state["open_tp"]:
                     exit_price, close_reason = state["open_tp"], "TP"
         else:
             trough = min(state.get("trail_trough") or state["open_entry"], state["open_entry"])
             for cd in missed:
                 if cd["h"] >= state["open_sl"]:
-                    exit_price, close_reason = state["open_sl"], "TRAIL"; break
+                    exit_price, close_reason = state["open_sl"], "SL"; break
                 if cd["l"] <= state["open_tp"]:
                     exit_price, close_reason = state["open_tp"], "TP"; break
-                trough = min(trough, cd["l"])                  # le trail suit les plus bas
+                trough = min(trough, cd["l"])
                 state["trail_trough"] = trough
+                # breakeven : a +1R en faveur, stop remis a l'entree — et c'est tout
                 if r_unit > 0 and trough <= state["open_entry"] - BE_R_MULT * r_unit:
-                    cand = min(state["open_entry"], trough + TRAIL_ATR * atr)
-                    state["open_sl"] = min(state["open_sl"], round(cand, 2))
+                    if state["open_sl"] > state["open_entry"]:
+                        state["open_sl"] = state["open_entry"]
             if exit_price is None and live_price is not None:
                 if live_price >= state["open_sl"]:
-                    exit_price, close_reason = state["open_sl"], "TRAIL"
+                    exit_price, close_reason = state["open_sl"], "SL"
                 elif live_price <= state["open_tp"]:
                     exit_price, close_reason = state["open_tp"], "TP"
-        # libelle honnete : SL initial jamais deplace = "SL", trail serre = "TRAIL"
-        if close_reason == "TRAIL":
-            if is_long and state["open_sl"] <= (state.get("open_sl_init") or state["open_sl"]):
-                close_reason = "SL"
-            elif not is_long and state["open_sl"] >= (state.get("open_sl_init") or state["open_sl"]):
-                close_reason = "SL"
+        # libelle honnete : SL initial jamais deplace = "SL", stop remis a l'entree = "BE"
+        if close_reason == "SL":
+            sl_init = state.get("open_sl_init")
+            if sl_init is not None and state["open_sl"] != sl_init:
+                close_reason = "BE"
 
         if exit_price is not None:
             pnl_usd = (exit_price - state["open_entry"]) * d * state["open_size"]
@@ -678,7 +680,7 @@ def main():
             post_discord(webhook, {
                 "title": "🔕 Blackout news — entrées suspendues",
                 "description": f"**{cur_blackout}**\nAucune nouvelle entrée jusqu'à la fin de la fenêtre. "
-                               "Les positions ouvertes restent protégées (SL / trailing / TP actifs).",
+                               "Les positions ouvertes restent protégées (SL / break even / TP actifs).",
                 "color": 0xE67E22,
                 "footer": {"text": "Calendrier éco auto — ForexFactory"},
             }, username="Bot Or 📰")
