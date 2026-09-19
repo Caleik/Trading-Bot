@@ -407,6 +407,31 @@ def post_discord(webhook_url, embed, username="Bot Or \U0001F916"):
 
 # ================== SIMULATION CHALLENGE FTMO (miroir du papier) ==================
 
+# ---------------------------------------------------------------------------
+# TradePulse IA : publication des signaux vers l'app d'abonnement (copy-trading)
+# Silencieux en cas d'echec : ne doit JAMAIS interrompre le cycle de trading.
+TRADEPULSE_URL = "https://base44.app/api/apps/6aaeaf7614c65310c37c7015/functions/publishSignal"
+
+def publish_tradepulse(payload):
+    """Pousse un signal (open / close / update BE) vers TradePulse IA."""
+    secret = os.environ.get("TRADEPULSE_SECRET", "")
+    if not secret:
+        return False   # non configure -> no-op
+    try:
+        r = requests.post(TRADEPULSE_URL,
+                          json=payload,
+                          headers={"Content-Type": "application/json",
+                                   "x-publish-secret": secret},
+                          timeout=8)
+        if r.status_code == 200:
+            print(f"[TradePulse] OK {payload.get('action')} -> {r.text[:120]}")
+            return True
+        print(f"[TradePulse] HTTP {r.status_code} sur {payload.get('action')} : {r.text[:200]}")
+    except Exception as e:
+        print(f"[TradePulse] echec ({payload.get('action')}) : {e}")
+    return False
+
+
 def challenge_defaults(attempt=1, phase=1, history=None):
     return {
         "attempt": attempt,          # numero de la tentative en cours
@@ -805,6 +830,11 @@ def run_cycle(state, trades, learning, journal):
                     exit_price, close_reason = state["open_sl"], "SL"
                 elif live_price <= state["open_tp"]:
                     exit_price, close_reason = state["open_tp"], "TP"
+        # break even publie vers TradePulse (les abonnes suivent le stop a l'entree)
+        if exit_price is None and state["open_sl"] != state.get("tp_pub_sl"):
+            if publish_tradepulse({"action": "update", "sl": state["open_sl"]}):
+                state["tp_pub_sl"] = state["open_sl"]
+
         # week-end : marche de l'or ferme -> on securise la position avant la pause
         if exit_price is None and weekend_now:
             exit_price = round(live_price or price, 2)
@@ -817,6 +847,13 @@ def run_cycle(state, trades, learning, journal):
                 close_reason = "BE"
 
         if exit_price is not None:
+            # signal de cloture vers TradePulse IA (SL/TP/BE/WEEKEND)
+            publish_tradepulse({
+                "action": "close",
+                "close_price": round(exit_price, 2),
+                "close_reason": close_reason,
+            })
+            state.pop("tp_pub_sl", None)
             pnl_usd = (exit_price - state["open_entry"]) * d * state["open_size"]
             pnl_eur = pnl_usd / eurusd
             new_equity = round(state["equity"] + pnl_eur, 2)
@@ -927,6 +964,13 @@ def run_cycle(state, trades, learning, journal):
                         "open_time": datetime.now(ZoneInfo("Europe/Paris")).isoformat(),
                     })
                     challenge_on_open(ch, side, price, sl_dist)
+                    # signal vers TradePulse IA (meme trade pour les abonnes)
+                    publish_tradepulse({
+                        "action": "open", "symbol": "XAUUSD",
+                        "side": "BUY" if side == "LONG" else "SELL",
+                        "entry_price": round(price, 2), "sl": sl, "tp": tp,
+                    })
+                    state["tp_pub_sl"] = sl
                     result.update({
                         "action": "OPEN_" + side,
                         "detail": f"Trade ouvert : {side} {size_oz} oz @ {round(price,2)} | "

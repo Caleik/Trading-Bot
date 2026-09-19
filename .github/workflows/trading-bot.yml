@@ -30,6 +30,7 @@ jobs:
       - name: Cycle du bot (1 check ~30 s)
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          TRADEPULSE_SECRET: ${{ secrets.TRADEPULSE_SECRET }}
         run: python bot.py
       - name: Sauvegarder l'etat du bot
         if: always()   # commit l'etat meme si Discord a echoue (run rouge visible)
