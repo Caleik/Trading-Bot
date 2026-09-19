@@ -32,6 +32,18 @@ import requests
 STATE_FILE = "state.json"
 TRADES_FILE = "trades.json"
 RISK_PCT = 0.02          # risque par trade : 2% du capital
+
+# ---- MODE CHALLENGE PROP FIRM (simulation FTMO) ----
+# Miroir : chaque trade papier est rejoue sur un compte fictif de 10 000 EUR
+# avec un risque reduit, et les regles FTMO sont verifiees a chaque cloture.
+CHALLENGE_FILE = "challenge.json"
+CH_START = 10000.0     # solde initial du compte simule (challenge 10k)
+CH_RISK = 0.01         # risque par trade en mode challenge (1% au lieu de 2%)
+CH_DAILY_LOSS = 0.05   # FTMO : max 5% de perte journaliere (sur solde initial)
+CH_MAX_DD = 0.10       # FTMO : max 10% de drawdown total (statique, sur solde initial)
+CH_P1_TARGET = 1.10    # phase 1 : objectif +10%
+CH_P2_TARGET = 1.05    # phase 2 : objectif +5%
+CH_MIN_DAYS = 4        # FTMO : minimum 4 jours de trading par phase
 # ---- STRATEGIE CONFIRMATION + RATIO 1:2,5 (vision d'Enzo) ----
 # On n'anticipe plus le retournement : apres une chute (resp. hausse), on attend
 # la 1re bougie 5m qui CLOTURE dans le sens inverse, puis une 2e bougie qui confirme.
@@ -393,7 +405,116 @@ def post_discord(webhook_url, embed, username="Bot Or \U0001F916"):
 
 
 
-def build_embed(heure, result, state):
+# ================== SIMULATION CHALLENGE FTMO (miroir du papier) ==================
+
+def challenge_defaults(attempt=1, phase=1, history=None):
+    return {
+        "attempt": attempt,          # numero de la tentative en cours
+        "phase": phase,              # 1 = challenge, 2 = verification
+        "equity": CH_START,
+        "day": datetime.now(ZoneInfo("Europe/Paris")).strftime("%Y-%m-%d"),
+        "day_start": CH_START,       # solde au debut du jour (regle 5% journalier)
+        "trades": 0,                 # trades clotures de la tentative
+        "days": [],                  # jours de trading (>=1 trade ouverts ce jour-la)
+        "open": None,                # miroir de la position papier en cours
+        "history": history or [],    # resultats des tentatives precedentes (conserves)
+    }
+
+def challenge_load():
+    ch = load_json(CHALLENGE_FILE, None)
+    if ch is None:
+        ch = challenge_defaults()
+    return ch
+
+def challenge_rollover_day(ch):
+    today = datetime.now(ZoneInfo("Europe/Paris")).strftime("%Y-%m-%d")
+    if ch["day"] != today:
+        ch["day"] = today
+        ch["day_start"] = ch["equity"]
+
+def challenge_on_open(ch, side, entry, sl_dist):
+    """Le papier ouvre un trade -> le compte challenge en prend un aussi (risque 1%)."""
+    ch["open"] = {"side": side, "entry": entry, "sl_dist": sl_dist,
+                  "risk": round(ch["equity"] * CH_RISK, 2)}
+    today = datetime.now(ZoneInfo("Europe/Paris")).strftime("%Y-%m-%d")
+    if today not in ch["days"]:
+        ch["days"].append(today)
+
+def challenge_on_close(ch, exit_price):
+    """Cloture miroir : meme prix de sortie, R identique, taille basee sur 10k a 1%.
+    Retourne la liste des evenements FTMO (echec / phase validee)."""
+    events = []
+    o = ch.get("open")
+    if not o:
+        return ch, events
+    d = 1 if o["side"] == "LONG" else -1
+    r = d * (exit_price - o["entry"]) / o["sl_dist"] if o["sl_dist"] else 0.0
+    pnl = round(o["risk"] * r, 2)
+    ch["equity"] = round(ch["equity"] + pnl, 2)
+    ch["trades"] += 1
+    ch["open"] = None
+
+    target = CH_P1_TARGET if ch["phase"] == 1 else CH_P2_TARGET
+    if ch["equity"] <= CH_START * (1 - CH_MAX_DD):
+        events.append(("FAIL_DD", ch["equity"]))
+        ch["history"].append({"attempt": ch["attempt"], "phase": ch["phase"],
+                              "result": "FAIL_DD", "trades": ch["trades"],
+                              "days": len(ch["days"]), "equity": ch["equity"]})
+        ch.update(challenge_defaults(attempt=ch["attempt"] + 1, history=ch["history"]))
+    elif ch["equity"] - ch["day_start"] <= -CH_START * CH_DAILY_LOSS:
+        events.append(("FAIL_DAILY", ch["equity"]))
+        ch["history"].append({"attempt": ch["attempt"], "phase": ch["phase"],
+                              "result": "FAIL_DAILY", "trades": ch["trades"],
+                              "days": len(ch["days"]), "equity": ch["equity"]})
+        ch.update(challenge_defaults(attempt=ch["attempt"] + 1, history=ch["history"]))
+    elif ch["equity"] >= CH_START * target and len(ch["days"]) >= CH_MIN_DAYS:
+        if ch["phase"] == 1:
+            events.append(("PASS_P1", ch["equity"]))
+            ch["history"].append({"attempt": ch["attempt"], "phase": 1,
+                                  "result": "PASS_P1", "trades": ch["trades"],
+                                  "days": len(ch["days"]), "equity": ch["equity"]})
+            ch.update(challenge_defaults(attempt=ch["attempt"], phase=2, history=ch["history"]))
+        else:
+            events.append(("PASS_P2", ch["equity"]))
+            ch["history"].append({"attempt": ch["attempt"], "phase": 2,
+                                  "result": "PASS_P2", "trades": ch["trades"],
+                                  "days": len(ch["days"]), "equity": ch["equity"]})
+            ch.update(challenge_defaults(attempt=ch["attempt"] + 1, history=ch["history"]))
+    return ch, events
+
+def challenge_summary(ch):
+    prog_pct = ch["equity"] / CH_START * 100 - 100
+    tgt_pct = round((CH_P2_TARGET - 1) * 100) if ch["phase"] == 2 else round((CH_P1_TARGET - 1) * 100)
+    return (f"**{ch['equity']:,.0f} EUR / 10 000** · tentative n°{ch['attempt']} "
+            f"· phase {ch['phase']}/2 ({prog_pct:+.2f}% / objectif +{tgt_pct}%) · "
+            f"jour {len(ch['days'])}/{CH_MIN_DAYS}+ · {ch['trades']} trade(s) · risque 1%").replace(",", " ")
+
+def build_challenge_embed(event, equity):
+    ev = event[0] if isinstance(event, tuple) else event
+    if ev == "PASS_P2":
+        return {"title": "🏆 SIMULATION FTMO RÉUSSIE — compte financé (simulé)",
+                "description": "La stratégie a validé la phase 1 (+10%) **et** la phase 2 (+5%) "
+                               "dans la simulation 10k à risque 1%. Prête pour un vrai challenge ! "
+                               "Une nouvelle tentative démarre pour confirmer.",
+                "color": 0xF1C40F}
+    if ev == "PASS_P1":
+        return {"title": "🎉 Simu FTMO — Phase 1 validée (+10%)",
+                "description": "Objectif de la phase 1 atteint (min. 4 jours de trading respecté). "
+                               "Phase 2 (vérification, +5%) démarre sur un nouveau compte 10k.",
+                "color": 0x2ECC71}
+    if ev == "FAIL_DAILY":
+        return {"title": "❌ Simu FTMO échouée — perte journalière ≥ 5%",
+                "description": f"La tentative aurait enfreint la règle de perte journalière "
+                               f"(solde : {equity:,.0f} EUR). Nouvelle tentative relancée.".replace(",", " "),
+                "color": 0xE74C3C}
+    if ev == "FAIL_DD":
+        return {"title": "❌ Simu FTMO échouée — drawdown ≥ 10%",
+                "description": f"La tentative aurait enfreint la règle de drawdown total "
+                               f"(solde : {equity:,.0f} EUR). Nouvelle tentative relancée.".replace(",", " "),
+                "color": 0xE74C3C}
+    return None
+
+def build_embed(heure, result, state, ch):
     price = result["price"]
     pos = result.get("position")
     perf = result["equity"] - state["starting_equity"]
@@ -449,6 +570,7 @@ def build_embed(heure, result, state):
             },
             {"name": "📌 Position", "value": pos_text, "inline": False},
             {"name": "🔢 Trades", "value": f"{state['trade_count']} trade(s) clôturé(s)", "inline": True},
+            {"name": "🏆 Simu FTMO 10k", "value": challenge_summary(ch), "inline": False},
         ],
         "footer": {"text": "Bot trading papier — CONFIRMATION 5m (2 clôtures) + biais 1h · risque 2% → objectif 2,5R · breakeven à +1R puis on laisse courir jusqu'au TP ou au stop · lun 01h–ven 20h (pause week-end) · IA apprend des trades"},
     }
@@ -598,6 +720,8 @@ def run_cycle(state, trades, learning, journal):
     # pause week-end (marche de l'or ferme) + contexte IA courant
     now_paris = datetime.now(ZoneInfo("Europe/Paris"))
     weekend_now = weekend_block(now_paris)
+    ch = challenge_load()
+    challenge_rollover_day(ch)
     state["weekend_active"] = weekend_now
     vol_pct = round(atr / price * 100, 3) if price else 0.0
     avoid_key = entry_blocked_by_learning(learning, now_paris.hour, vol_pct)
@@ -723,6 +847,10 @@ def run_cycle(state, trades, learning, journal):
                 "detail": f"Trade fermé ({close_reason}) : "
                           f"{'+' if pnl_eur >= 0 else ''}{round(pnl_eur, 2)} EUR",
             })
+            # simu FTMO : rejouer la cloture sur le compte challenge 10k
+            ch, ch_events = challenge_on_close(ch, exit_price)
+            if ch_events:
+                result["challenge_events"] = ch_events
             # couche IA : analyser le trade ferme, ajuster les filtres d'entree
             ia_new = review_learning(state, trades, learning, journal)
             if ia_new:
@@ -798,6 +926,7 @@ def run_cycle(state, trades, learning, journal):
                         "trail_trough": price if side == "SHORT" else None,
                         "open_time": datetime.now(ZoneInfo("Europe/Paris")).isoformat(),
                     })
+                    challenge_on_open(ch, side, price, sl_dist)
                     result.update({
                         "action": "OPEN_" + side,
                         "detail": f"Trade ouvert : {side} {size_oz} oz @ {round(price,2)} | "
@@ -814,6 +943,7 @@ def run_cycle(state, trades, learning, journal):
     state["last_cycle"] = datetime.now(ZoneInfo("Europe/Paris")).isoformat()
     save_json(STATE_FILE, state)
     save_json(TRADES_FILE, trades)
+    save_json(CHALLENGE_FILE, ch)
     result["eurusd"] = round(eurusd, 4)
     return result
 
@@ -850,6 +980,8 @@ def main():
         state["dispatches_today"] = 0
     state["dispatches_today"] = state.get("dispatches_today", 0) + 1
     result = run_cycle(state, trades, learning, journal)
+    # recharger la simu FTMO mise a jour par run_cycle
+    challenge = challenge_load()
     heure = datetime.now(ZoneInfo("Europe/Paris")).strftime("%H:%M:%S")
     # transitions pause/reprise week-end -> message Discord dedie
     cur_weekend = state.get("weekend_active")
@@ -893,6 +1025,11 @@ def main():
         event = build_event_embed(result, state)
         if event:
             ok, info = post_discord(webhook, event)
+        # simu FTMO : annoncer echec / phase validee
+        for ev, eq in result.get("challenge_events", []):
+            ch_emb = build_challenge_embed(ev, eq)
+            if ch_emb:
+                post_discord(webhook, ch_emb, username="Bot Or \U0001F3C6")
         # revue IA : le bot annonce ce qu'il a appris du trade ferme
         if result.get("ia_entries"):
             post_discord(webhook, build_ia_embed(result["ia_entries"], learning, state),
@@ -901,7 +1038,7 @@ def main():
         # independant des runs manques/throttles
         now_ms = int(time.time() * 1000)
         if now_ms - state.get("last_report_ms", 0) >= 12 * 60 * 1000:
-            ok2, info2 = post_discord(webhook, build_embed(heure, result, state))
+            ok2, info2 = post_discord(webhook, build_embed(heure, result, state, challenge))
             state["last_report_ms"] = now_ms
             ok, info = ok or ok2, info + " | cycle: " + ("OK" if ok2 else info2)
             if not ok2:
@@ -916,6 +1053,7 @@ def main():
     save_json(TRADES_FILE, trades)
     save_json(LEARNING_FILE, learning)
     save_json(JOURNAL_FILE, journal)
+    save_json(CHALLENGE_FILE, challenge)
 
 
 if __name__ == "__main__":
