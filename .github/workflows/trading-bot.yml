@@ -36,7 +36,7 @@ jobs:
         run: |
           git config user.name "Trading Bot"
           git config user.email "actions@github.com"
-          git add state.json trades.json gold_learning.json gold_journal.json
+          git add state.json trades.json gold_learning.json gold_journal.json challenge.json
           if git diff --cached --quiet; then
             echo "Rien a commiter"
           else
